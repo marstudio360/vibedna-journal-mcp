@@ -63,7 +63,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 PRODUCT_SLUG = "journal"
 
 
@@ -167,6 +167,21 @@ _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", "_archive", "venv"
 
 def _is_journal_name(name: str) -> bool:
     return any(pat.match(name) for pat in _JOURNAL_PATTERNS)
+
+
+def _is_journal_path(p: Path) -> bool:
+    """What the indexer treats as a journal, plus the folder journal_get installs into."""
+    if p.suffix.lower() != ".md":
+        return False
+    if _is_journal_name(p.name):
+        return True
+    low = str(p).replace("\\", "/").lower()
+    if any(d in low for d in ("/journals-drafts/", "/journals-refined/", "/journals-products/")):
+        return True
+    try:
+        return p.resolve().is_relative_to((_HOME / "library").resolve())
+    except Exception:
+        return False
 
 
 # ─── Metadata + frontmatter ─────────────────────────────────────────────────
@@ -370,7 +385,7 @@ def _resolve(name_or_path: str) -> Optional[dict]:
     # file (a key, a .env) is how a misled AI would read or write outside the journals.
     if Path(nq).is_file():
         p = Path(nq).resolve()
-        return {"path": str(p)} if _is_journal_name(p.name) else None
+        return {"path": str(p)} if _is_journal_path(p) else None
     c = _conn()
     try:
         rows = c.execute(
