@@ -63,13 +63,17 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 PRODUCT_SLUG = "journal"
 
 
-def _http_get(path: str, timeout: int = 20) -> dict:
+def _http_get(path: str, timeout: int = 20, token: str = "") -> dict:
     url = path if path.startswith("http") else f"{_SITE}{path}"
-    req = urllib.request.Request(url, headers={"User-Agent": "journal-mcp/1.2", "Accept": "application/json"})
+    headers = {"User-Agent": "journal-mcp/1.2", "Accept": "application/json"}
+    if token:
+        # In a header, never in the URL: query strings end up in server and proxy logs.
+        headers["X-Journal-Token"] = token
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"null")
 
@@ -124,6 +128,10 @@ def _load_auth() -> dict:
 
 def _save_auth(d: dict) -> None:
     _AUTH.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    try:
+        os.chmod(_AUTH, 0o600)  # owner only on macOS/Linux; Windows keeps it in the user profile
+    except OSError:
+        pass
 
 
 def _default_roots() -> list[Path]:
@@ -155,6 +163,10 @@ _JOURNAL_PATTERNS = [
 ]
 
 _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", "_archive", "venv", ".venv", "dist", "build"}
+
+
+def _is_journal_name(name: str) -> bool:
+    return any(pat.match(name) for pat in _JOURNAL_PATTERNS)
 
 
 # ─── Metadata + frontmatter ─────────────────────────────────────────────────
@@ -354,9 +366,11 @@ def _resolve(name_or_path: str) -> Optional[dict]:
     if not name_or_path:
         return None
     nq = name_or_path.strip()
-    # Exact path
+    # Exact path, journal files only. Read and append take a path, and a path to any
+    # file (a key, a .env) is how a misled AI would read or write outside the journals.
     if Path(nq).is_file():
-        return {"path": str(Path(nq).resolve())}
+        p = Path(nq).resolve()
+        return {"path": str(p)} if _is_journal_name(p.name) else None
     c = _conn()
     try:
         rows = c.execute(
@@ -528,6 +542,8 @@ def journal_create(name: str, project_dir: str, body: str = "") -> dict:
     name = name.strip()
     if not name.endswith(".md"):
         name += ".md"
+    if Path(name).name != name or not _is_journal_name(name):
+        return {"error": f"name must be a plain journal file name like 'MYPROJECT_JOURNAL.md', got: {name}"}
     project = Path(project_dir).expanduser().resolve()
     if not project.is_dir():
         return {"error": f"project_dir does not exist: {project}"}
@@ -1132,6 +1148,11 @@ def journal_backup_to_drive(name_or_path: str = "", remote: str = "gdrive", remo
     import subprocess
     if not shutil.which("rclone"):
         return {"error": "rclone not installed. Install: https://rclone.org/install/ then run `rclone config create gdrive drive`"}
+    # Both end up in rclone's destination argument: a remote name and a plain folder path.
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", remote or ""):
+        return {"error": f"remote must be an rclone remote name (letters, digits, _ or -), got: {remote}"}
+    if not re.fullmatch(r"[A-Za-z0-9 _./-]+", remote_folder or "") or ".." in remote_folder.split("/"):
+        return {"error": f"remote_folder must be a plain folder path, got: {remote_folder}"}
     targets: list[dict] = []
     if name_or_path.strip():
         j = _resolve(name_or_path)
@@ -1195,7 +1216,7 @@ def journal_pair(token: str = "") -> dict:
         return {"paired": False,
                 "how": f"Log in at {_SITE}/library, copy your token under 'Connect your AI', then journal_pair(token=...)"}
     try:
-        res = _http_get(f"/api/journals/library?token={urllib.parse.quote(token)}")
+        res = _http_get("/api/journals/library", token=token)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             return {"error": "invalid_token", "how": f"Copy a fresh token from {_SITE}/library"}
@@ -1256,6 +1277,9 @@ def journal_get(slug: str, dest_dir: str = "", confirm: bool = False) -> dict:
     slug = (slug or "").strip()
     if not slug:
         return {"error": "slug required", "hint": "run journal_market() to list slugs"}
+    # The slug becomes a file name: shelf slugs only, so it cannot climb out of dest_dir.
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", slug):
+        return {"error": f"not a journal slug: {slug}", "hint": "run journal_market() to list slugs"}
     auth = _load_auth()
     token = auth.get("token")
 
@@ -1263,9 +1287,9 @@ def journal_get(slug: str, dest_dir: str = "", confirm: bool = False) -> dict:
         dest = Path(dest_dir).expanduser() if dest_dir else (_HOME / "library")
         dest.mkdir(parents=True, exist_ok=True)
         target = dest / f"{slug}.md"
-        url = f"{_SITE}/api/journals/download?slug={urllib.parse.quote(slug)}&token={urllib.parse.quote(token)}"
+        url = f"{_SITE}/api/journals/download?slug={urllib.parse.quote(slug)}"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "journal-mcp/1.2"})
+            req = urllib.request.Request(url, headers={"User-Agent": "journal-mcp/1.2", "X-Journal-Token": token})
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = r.read()
             target.write_bytes(data)
@@ -1313,7 +1337,7 @@ def journal_library() -> dict:
     if not token:
         return {"error": "not paired", "how": f"journal_pair(token) with your token from {_SITE}/library"}
     try:
-        res = _http_get(f"/api/journals/library?token={urllib.parse.quote(token)}")
+        res = _http_get("/api/journals/library", token=token)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             return {"error": "token expired or invalid", "how": f"re-pair from {_SITE}/library"}
