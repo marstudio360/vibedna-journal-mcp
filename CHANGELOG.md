@@ -1,0 +1,76 @@
+# Changelog
+
+## 1.2.0 (2026-10-30)
+
+Journals DNA: your AI cannot skip your journal. Everything since 1.0.6, in plain words.
+
+**Your AI reads before it acts**
+- New: the journals mod, a Claude Code plugin, installed with one command (`install_mod.py`, with `--dry-run` and
+  `--uninstall`). It also registers the journal server in Claude Code.
+- Before an edit, a command that writes, or an agent launch, your AI sees the map of what it is about to touch. The
+  first touch of a piece named in a `## Brain map` table stays stopped until that piece's journal was really read in
+  the session; a plain retry does not pass.
+- New tool `journal_quick` and `server.py --quick <word or file>`: for any word, file or topic, its journals, its
+  Brain map row (who is on it now, what to read first), decisions, what already exists, the latest entries and
+  what is pending.
+- "A tool already does this": when your AI is about to write or run its own script for a job one of your tools
+  does, it is shown that tool and stopped once.
+- Your rules: dated lines in any `RULES_JOURNAL.md`, `*_RULES_JOURNAL.md` or `OWNER_SAID_JOURNAL.md` are shown when
+  an action shares their words, and stop once. Writing a rule that is already there gets a warning.
+- A command on a folder that the journals say is an old twin of the live copy is stopped once.
+
+**It catches repeats and stale status**
+- The map marks lines that state something that changes (active, live, paused, a balance, a count) with "check
+  live before repeating it" and how to check it.
+- `journal_append` warns (the entry is still written) when an entry states an outside status without saying how
+  and when it was checked.
+- After each reply, if your AI listed as pending something a journal says shipped, or proposed something your
+  journals already have a verdict on, it is told so in its next turn (never drawn in your chat).
+- Names in a command's output that your journals already ruled on come back as a short note.
+- When a newer entry says a piece was replaced, the map shows that first.
+
+**Less noise**
+- A piece's map shows once per session, not on every file of it. Background task notices and agent reports are
+  not treated as your messages. Launching an agent is never stopped (its map rides along as context). Git
+  bookkeeping (add, commit, status, log) gets no map. Throwaway git worktrees (`-wt-` folders), test fixtures and
+  files a website serves are not indexed.
+
+**Obsidian**
+- New `obsidian.py vault`: START HERE page, a table view of every journal, and a canvas map by folder, plus a
+  minimal `.obsidian` config. `obsidian.py add-frontmatter` gives older journals Obsidian properties (dry run by
+  default).
+- New journals are born with Obsidian properties; reads, search and appends handle them, and appends keep
+  `updated` and `entries` current with an atomic write.
+
+**More tools and easier calls**
+- New tools: `journal_verify` (re-run `check:` lines under a claim), `journal_audit`, `journal_contradictions`,
+  `journal_map`. 35 tools in all.
+- Journal tools take the journal as `name_or_path`, `project`, `journal`, `name` or `path`; a missing argument gives
+  one plain line with an example.
+- `journal_read` reads line ranges (`offset`/`limit` or `start_line`/`end_line`); `journal_list_sections` pages and
+  filters long journals; `journal_search` returns the best entries of each journal.
+- An append to a read-only journal is queued in an outbox file instead of failing.
+
+## 1.0.6 (2026-10-22)
+
+- New "Decided" section: `journal_decision_add(name, decision, why, aliases, see, date)` records what the owner decided as one line, with every word someone might use for it.
+- `journal_search`: each result carries `current_state` and `already_decided`; a search with few matches returns a hint to try other words.
+- `journal_before_build`, the before-build hook and the start brief show the decisions too.
+- Better before-build matching; new synonym groups; docs fixes.
+
+## 1.0.5 (2026-10-22)
+
+- Built-in manual for any AI, "Already exists" registry, `journal_before_build` and an optional before-build hook.
+- Search with synonyms in two languages; start brief with pending work first; "database is locked" fix.
+
+## 1.0.4 (2026-10-20)
+
+- Search never answers from an old copy: changed journals are re-read before each search.
+
+## 1.0.3 (2026-10-06)
+
+- Purchased journals and drafts are readable again after the 1.0.2 hardening.
+
+## 1.0.2 (2026-10-06)
+
+- Security: read/append/update accept only journal files; `journal_create` rejects `../`; the connect token travels in a header.

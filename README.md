@@ -1,137 +1,86 @@
-# VibeDNA Journal MCP
+# Journals DNA
 
-One journal file per project that your AI reads at session start and updates as it works.
+**Your AI cannot skip your journal.**
 
-Journal gives every project one plain markdown file (`*_JOURNAL.md`). Your AI reads it when a session starts and appends to it as work ships: decisions with their reasons, bugs with root cause and fix, current state, roadmap, and a handoff note for the next session. Ranked full-text search finds an entry across every project's journal at once. One optional tool adds a rule to your `CLAUDE.md` so Claude Code keeps the habit without being asked.
+Journals DNA gives every project one markdown journal (`<PROJECT>_JOURNAL.md`) that your AI reads before it acts and
+writes to while it works. The next session, or another AI, picks up exactly where the last one stopped, and you can
+share your work with anyone by sending the journal.
 
-- Runs locally over stdio. Python 3.10+ and the `mcp` package.
-- The journaling core makes no network calls. Your journals stay on your disk.
-- Optional marketplace tools browse and download journals from vibedna.ai, only when you call them.
+It runs on your machine. Your journals stay where they are, in plain markdown.
 
-Homepage: https://vibedna.ai/store/journal
+## What it does, in plain words
 
-## Tools (25)
+- **Journals your AI must read.** In Claude Code, the journals mod stops the first edit of a piece of your project
+  until the AI has really read that piece's journal. A plain retry does not get through; reading the journal does.
+- **A map before every change.** Before your AI edits a file, runs a command or briefs an agent, it sees a short map
+  of that thing: which journal talks about it, who is working on it now, what was already decided, what already
+  exists, the latest entries and what is still pending.
+- **It warns when your AI repeats itself.** When the AI is about to build its own way of doing a job a tool you
+  already have does, it is shown that tool and stopped once. When a reply proposes something your journals already
+  have a verdict on, or lists as pending something a journal says shipped, the AI is told so in its next turn.
+- **It warns about stale status.** Lines that state something that changes (an account is active, a service is
+  live, a balance) are marked "check live before repeating it" in the map. When the AI writes an entry that states
+  such a status without saying how it was checked, the entry is still saved and the AI gets a warning.
+- **Your rules, in your words.** Write your rules as dated lines in a rules journal (`RULES_JOURNAL.md` or any
+  `*_RULES_JOURNAL.md`). When an action shares the words of a rule, the rule is shown and the action stops once.
+- **Opens in Obsidian.** One command builds a map of all your journals for Obsidian: a START HERE page, a table view
+  of every journal, and a canvas by folder. New journals are born with Obsidian properties.
 
-**Catch up on a project**
+## What is inside
 
-| Tool | What it does |
+| Part | What it is |
 |---|---|
-| `journal_handoff_brief(name)` | Short catch-up: header plus the latest entries |
-| `journal_read(name, max_kb)` | Full journal contents |
-| `journal_read_section(name, section)` | One section, e.g. `Current state` or `Handoff for next session` |
-| `journal_list_sections(name)` | The H2 sections of a journal |
-| `journal_list(project, last_days)` | List the journals in the index |
-
-**Log work as it ships**
-
-| Tool | What it does |
-|---|---|
-| `journal_append(name, entry, tag)` | Timestamped entry |
-| `journal_update_section(name, section, new_content, mode)` | Replace, append or prepend a section |
-| `journal_create(name, project_dir, body)` | New journal with the standard sections |
-
-**Search**
-
-| Tool | What it does |
-|---|---|
-| `journal_search(query, project)` | Ranked full-text search (SQLite FTS5) across all journals, with snippets |
-| `journal_recent_changes(last_hours)` | Journals updated lately |
-| `journal_stats()` | Totals, biggest and freshest journals |
-| `journal_browse(domain, tier, kind, tag)` | Browse the local library by metadata |
-| `journal_market_index(kind)` | Local feed of journals of one kind, with metadata |
-| `journal_overlap_check(name)` | Find journals that overlap with this one |
-
-**Setup**
-
-| Tool | What it does |
-|---|---|
-| `journal_index_refresh()` | Rescan the roots for journal files |
-| `journal_config_add_root(path)` | Add a folder to scan |
-| `journal_get_claude_rule()` | The recommended `CLAUDE.md` rule text |
-| `journal_install_rule(scope, confirm)` | Install that rule (preview unless `confirm=True`) |
-| `journal_backup_to_drive(name, remote, remote_folder)` | Copy journals to your own rclone remote (optional) |
-| `check_for_update()` | Compare this copy with the published version |
-| `vibedna_info()` | Product metadata |
-
-**Marketplace (optional, reaches vibedna.ai)**
-
-| Tool | What it does |
-|---|---|
-| `journal_market(query, domain)` | Browse the VibeDNA journal shelf |
-| `journal_pair(token)` | Link this install to a vibedna.ai account |
-| `journal_get(slug)` | Download a journal you own, or get a checkout link for one you don't |
-| `journal_library()` | List the journals you own |
+| `server.py` | The journal MCP server: 35 tools to read, search, write and keep journals (works with any MCP client) |
+| `quickmap.py`, `quick_hook.py` | The quick map and the checks the mod runs (local, no network, no AI) |
+| `toolmap.py`, `tool_concepts.json` | "A tool already does this": matches an action to the tools and flows your journals list |
+| `livecopy.py`, `ruledupes.py` | Warnings for a command on the wrong copy of a deployed folder, and for a rule written twice |
+| `obsidian.py` | Builds the Obsidian map of your journals |
+| `mod/` | The journals mod, a Claude Code plugin |
+| `install_mod.py` | One command that installs the server and the mod in Claude Code, and undoes it |
+| `examples/DEMO_PROJECT.md` | A small journal to try everything on (copy it as `DEMO_JOURNAL.md` into a test folder) |
+| `BRAIN_MAP_TEMPLATE.md`, `RULES_TEMPLATE.md` | Copy-paste starting points |
 
 ## Install
 
-```bash
-git clone https://github.com/marstudio360/vibedna-journal-mcp
-cd vibedna-journal-mcp
-pip install -r requirements.txt
-```
-
-`JOURNAL_ROOTS` is the list of folders to scan for journal files, separated by `;`. Without it, Journal scans `~/Desktop` and `~/Documents`.
-
-### Claude Code
+Full steps, written so you can hand the file to your AI: [INSTALL.md](INSTALL.md). Short version, from this folder:
 
 ```bash
-claude mcp add journal --scope user -e JOURNAL_ROOTS="/path/to/your/projects" -- python /absolute/path/to/vibedna-journal-mcp/server.py
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip install -r requirements.txt
+.venv/bin/python install_mod.py --dry-run          # Windows: .venv\Scripts\python install_mod.py --dry-run
+.venv/bin/python install_mod.py                    # Windows: .venv\Scripts\python install_mod.py
 ```
 
-Or in a project's `.mcp.json`:
+Then open a new Claude Code session and ask: `journal_quick("<a word from your project>")`.
 
-```json
-{
-  "mcpServers": {
-    "journal": {
-      "command": "python",
-      "args": ["/absolute/path/to/vibedna-journal-mcp/server.py"],
-      "env": { "JOURNAL_ROOTS": "/path/to/your/projects" }
-    }
-  }
-}
+Other MCP clients (Cursor and others) can run `server.py` as a normal MCP server; the mod and its stops are a
+Claude Code feature.
+
+## The tools
+
+| Group | Tools |
+|---|---|
+| Start and read | `journal_handoff_brief`, `journal_read` (line ranges), `journal_read_section`, `journal_list_sections`, `journal_list` |
+| Find | `journal_quick`, `journal_search`, `journal_before_build`, `journal_recent_changes`, `journal_map` |
+| Write | `journal_append`, `journal_update_section`, `journal_create`, `journal_decision_add`, `journal_capability_add` |
+| Keep it true | `journal_verify` (re-run `check:` lines), `journal_audit`, `journal_contradictions`, `journal_overlap_check`, `journal_stats` |
+| Setup | `journal_how_to`, `journal_index_refresh`, `journal_config_add_root`, `journal_install_rule`, `journal_get_claude_rule`, `journal_install_build_check`, `journal_backup_to_drive` |
+| Store | `journal_pair`, `journal_market`, `journal_get`, `journal_library`, `journal_browse`, `journal_market_index`, `check_for_update`, `vibedna_info` |
+
+## Open your journals in Obsidian
+
+```bash
+.venv/bin/python obsidian.py vault --root "<your projects folder>"            # dry run: lists what it would write
+.venv/bin/python obsidian.py vault --root "<your projects folder>" --apply    # writes it
 ```
 
-Then ask Claude: "Install the journal CLAUDE.md rule globally." That is the step that makes it read and write the journals on its own.
+It writes `_obsidian/START HERE.md`, `_obsidian/Journals.base`, `_obsidian/Journals map.canvas` and a minimal
+`.obsidian/` config in that folder, then you open the folder as a vault in Obsidian. Details in INSTALL.md.
 
-### Cursor
+## Your data
 
-Add the same `mcpServers` block to `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project).
+Everything is local: the journals are your files, the index lives in `~/.journal`. The quick map and the mod make no
+network calls. The store tools (`journal_market`, `journal_get`, ...) and `check_for_update` talk to vibedna.ai only
+when you call them. See [SECURITY.md](SECURITY.md).
 
-### Claude Desktop
-
-Add the same `mcpServers` block to `claude_desktop_config.json` (Settings > Developer > Edit Config), then restart Claude Desktop.
-
-[INSTALL.md](./INSTALL.md) is a step-by-step guide written so you can paste it into an AI chat and let the AI do the install.
-
-## Configuration
-
-| Variable | Default | What it does |
-|---|---|---|
-| `JOURNAL_ROOTS` | `~/Desktop;~/Documents` | Folders to scan for `*JOURNAL*.md` files |
-| `JOURNAL_HOME` | `~/.journal` | Where the search index and optional config live |
-| `JOURNAL_TRANSPORT` | `stdio` | `http` serves streamable HTTP on `PORT`, for cloud hosting only |
-
-## Journal scaffold
-
-`journal_create` starts every journal with these sections:
-
-```
-## Vision / Why this exists
-## Current state
-## Roadmap
-## Decisions log
-## Incidents
-## Handoff for next session
-## Recent entries
-```
-
-## Security
-
-See [SECURITY.md](./SECURITY.md) for what the server reads, writes and sends.
-
-## License
-
-MIT, see [LICENSE](./LICENSE). Copyright (c) 2026 VibeDNA.
-
-Support: admin@vibedna.ai
+Vibedna, vibedna.ai

@@ -1,0 +1,17 @@
+{
+  "name": "journals-dna",
+  "owner": {
+    "name": "Vibedna"
+  },
+  "metadata": {
+    "description": "Journals DNA: your AI cannot skip your journal."
+  },
+  "plugins": [
+    {
+      "name": "journals",
+      "source": "./journals",
+      "description": "Your AI cannot skip your journal.",
+      "version": "1.2.0"
+    }
+  ]
+}
