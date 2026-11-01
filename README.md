@@ -23,6 +23,13 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
   such a status without saying how it was checked, the entry is still saved and the AI gets a warning.
 - **Your rules, in your words.** Write your rules as dated lines in a rules journal (`RULES_JOURNAL.md` or any
   `*_RULES_JOURNAL.md`). When an action shares the words of a rule, the rule is shown and the action stops once.
+- **Finds what you meant, in any language (optional).** A small model on your own processor gives every entry a
+  meaning, so a question in other words or another language finds the entry that says the same thing. Your journals
+  never leave your computer.
+- **Old decisions never pass as current.** When a later entry replaced a decision, or states a different price or
+  number for it, the decision is shown with that newer line first and your AI checks the live source and updates it.
+- **It stops rebuilding what already exists.** Before your AI writes a new script or briefs an agent to build
+  something a shipped entry already did, it is shown that entry and stopped once.
 - **Opens in Obsidian.** One command builds a map of all your journals for Obsidian: a START HERE page, a table view
   of every journal, and a canvas by folder. New journals are born with Obsidian properties.
 
@@ -35,6 +42,8 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | `toolmap.py`, `tool_concepts.json` | "A tool already does this": matches an action to the tools and flows your journals list |
 | `livecopy.py`, `ruledupes.py` | Warnings for a command on the wrong copy of a deployed folder, and for a rule written twice |
 | `obsidian.py` | Builds the Obsidian map of your journals |
+| `meaning.py`, `builtmap.py` | Search by meaning (optional, local model) and the "already built" check |
+| `embed_server.py` | Optional: one shared embedding service on a team GPU machine |
 | `mod/` | The journals mod, a Claude Code plugin |
 | `install_mod.py` | One command that installs the server and the mod in Claude Code, and undoes it |
 | `examples/DEMO_PROJECT.md` | A small journal to try everything on (copy it as `DEMO_JOURNAL.md` into a test folder) |

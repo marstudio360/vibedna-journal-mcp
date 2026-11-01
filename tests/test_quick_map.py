@@ -43,7 +43,7 @@ _write("OPS/OPS_JOURNAL.md", """# OPS JOURNAL
 ## 2026-10-20 10:00 [ship] localmodel queue worker retries jobs
 Worker for the localmodel queue.
 """)
-_write("LOCALMODEL/LOCALMODEL_JOURNAL.md", "# LOCALMODEL JOURNAL\n\n## 2026-10-22 09:00 [measure] localmodel speed\nqwen runs 40 tokens per second.\n"
+_write("LOCALMODEL/LOCALMODEL_JOURNAL.md", "# LOCALMODEL JOURNAL\n\n## 2026-10-22 09:00 [measure] localmodel speed\nlocalmodel runs 40 tokens per second.\n"
        "\n## Pending\n- [ ] localmodel: try a smaller context\n")
 _write("SHOP/SHOP_JOURNAL.md", "# SHOP JOURNAL\n\n## 2026-10-21 08:00 [fix] checkout brake\nno double charge brake.\n")
 
@@ -515,7 +515,7 @@ def test_everyday_action_words_never_stop_on_a_decision():
 def test_path_tokens_never_map_as_words():
     """2026-10-26: a message carrying a Windows short path (ANNLEE~1 under Users) mapped "annlee"."""
     _env()
-    _write("PIER/ANNLEE_JOURNAL.md", "# ANNLEE JOURNAL\n\n## 2026-10-20 10:00 [note] Annlee and Users\npierin users appdata.\n")
+    _write("PIER/ANNLEE_JOURNAL.md", "# ANNLEE JOURNAL\n\n## 2026-10-20 10:00 [note] Annlee and Users\nannlee users appdata.\n")
     _server._index_refresh_internal()
     msg = (r"results saved in C:\Users\ANNLEE~1\AppData\Local\Temp\claude\scratchpad\timing.py and "
            "C:/Users/Ann Lee/Desktop/DEV PROJECTS/x/quickmap.py, nothing else")
@@ -875,7 +875,7 @@ def _reply_in(text: str, session: str) -> str:
 
 def _dreamfield_fixture(handoff: str):
     _write("TONE GARDEN/DREAMFIELD_TEST_JOURNAL.md", "# DREAMFIELD TEST\n\n## Handoff for next session\n" + handoff +
-           "\n\n## 2026-10-16 17:56 [ship] DEFAULT = Clipgen 1.5 pro\nSeedance 1.5 pro is the studio default model now, "
+           "\n\n## 2026-10-16 17:56 [ship] DEFAULT = Clipgen 1.5 pro\nClipgen 1.5 pro is the studio default model now, "
            "live for every new clip.\n\n"
            "## 2026-10-27 13:13 [estado] RELEASES measured live\nSeven releases are out on Spotify.\n\n"
            "## 2026-10-27 14:28 [decision] OWNER 2026-10-27: REDO THE RELEASES, little by little\nOne release at a time.\n\n"
@@ -970,7 +970,7 @@ def test_command_output_names_a_thing_the_owner_already_corrected():
     _server._index_refresh_internal()
     buf = io.StringIO()
     with redirect_stdout(buf):
-        hit = srv.output_check({"output": "starpair-drip.service loaded failed failed\nhv-clipfarm.service failed\n"
+        hit = srv.output_check({"output": "starpair-drip.service loaded failed failed\nclip-farm.service failed\n"
                                           "owner_orders.json company_status.json"}, set())
     out = buf.getvalue()
     assert "NOT outages to report" in out and "starpair-drip" in out and "clip-farm" in out

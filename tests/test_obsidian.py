@@ -237,3 +237,40 @@ def test_yaml_scalars_are_safe():
     assert o._yaml_scalar("yes") == "'yes'"
     assert o._yaml_scalar('file.hasTag("journal")') == "'file.hasTag(\"journal\")'"
     assert o._yaml_scalar("it's: x") == "'it''s: x'"
+
+
+def test_archive_moves_old_months_in_two_steps_and_keeps_living_sections(tmp_path):
+    """Owner GO 2026-10-30: split TONE_GARDEN_JOURNAL.md (2.5 MB) by month. Living sections stay, a sub-section of an
+    old entry moves with it, nothing is lost, an entry appended between the steps is kept, CRLF is kept."""
+    j = tmp_path / "SHOP_JOURNAL.md"
+    text = ("# SHOP\r\n\r\n## Pending now\r\n- [ ] a\r\n\r\n## 2026-08-01 10:00 [ship] old one\r\nbody\r\n\r\n"
+            "## A sub-section of the old entry\r\nmore\r\n\r\n## 2026-09-02 11:00 [fix] sept\r\nx\r\n\r\n"
+            "## Handoff for next session\r\nlive handoff\r\n\r\n## 2026-10-03 12:00 [ship] october\r\ny\r\n")
+    j.write_bytes(text.encode())
+    dry = o.archive_write(j, "2026-10")
+    assert dry["moving_blocks"] == 3 and set(dry["months"]) == {"2026-08", "2026-09"} and j.read_bytes() == text.encode()
+    o.archive_write(j, "2026-10", apply=True)
+    assert j.read_bytes() == text.encode()  # step 1 never touches the journal
+    a8 = (tmp_path / "SHOP_JOURNAL_2026-08.md").read_bytes().decode()
+    assert "old one" in a8 and "A sub-section of the old entry" in a8 and "sept" not in a8
+    with open(j, "ab") as fh:  # another session appends between the steps
+        fh.write(b"\r\n## 2026-10-04 09:00 [ship] appended later\r\nz\r\n")
+    rep = o.archive_trim(j, apply=True)
+    assert rep["ok"], rep
+    out = j.read_bytes().decode()
+    for keep in ("## Pending now", "## Handoff for next session", "october", "appended later", "[[SHOP_JOURNAL_2026-08]]"):
+        assert keep in out, keep
+    for gone in ("old one", "A sub-section of the old entry", "[fix] sept"):
+        assert gone not in out, gone
+    assert "\r\n" in out and "\n\n## 2026" not in out.replace("\r\n", "\r\n")
+    assert (tmp_path / "_archive" / "SHOP_JOURNAL.full_" ).parent.exists()
+
+
+def test_archive_trim_refuses_when_a_month_file_lost_an_entry(tmp_path):
+    j = tmp_path / "SHOP_JOURNAL.md"
+    j.write_bytes(b"# S\n\n## 2026-08-01 10:00 [ship] old\nbody\n\n## 2026-10-03 12:00 [ship] new\ny\n")
+    o.archive_write(j, "2026-10", apply=True)
+    (tmp_path / "SHOP_JOURNAL_2026-08.md").write_text("# emptied by mistake\n", encoding="utf-8")
+    rep = o.archive_trim(j, apply=True)
+    assert not rep["ok"] and "missing" in rep["why"]
+    assert b"[ship] old" in j.read_bytes()

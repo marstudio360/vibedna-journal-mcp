@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PRODUCT_SLUG = "journal"
 
 
@@ -1721,7 +1721,18 @@ def journal_search(query: str, project: str = "", kind: str = "", limit: int = 1
     terms_matched, and "entries": its top 3 entries (heading, line, snippet). An entry that hits every
     query word ranks above one that hits some.
     """
-    return _journal_search_impl(query, project, kind, limit)
+    res = _journal_search_impl(query, project, kind, limit)
+    # Meaning layer (2026-10-30): entries that say the same thing, whatever the words or language. Always shown
+    # next to the word ranking, so a phrasing the words miss still surfaces (month archives included).
+    try:
+        import meaning
+        hits = meaning.query(query, k=8, path_like=project)
+        if hits and isinstance(res, dict):
+            res["same_meaning"] = hits
+            res["same_meaning_note"] = "same_meaning = entries whose meaning matches the query (any language); open the top ones even when the word ranking missed them."
+    except Exception:
+        pass
+    return res
 
 
 # ─── "Already exists": one line per working capability, found before anyone rebuilds it ─────────
@@ -1747,7 +1758,7 @@ def _find_section(text: str, names: tuple) -> Optional[tuple[str, str]]:
 
 
 _CARD_KEYS = ("status", "estado", "since", "desde", "see", "ver", "keys", "claves", "how", "cómo", "como",
-              "why", "porque", "date", "fecha", "aliases", "alias")
+              "why", "porque", "date", "fecha", "aliases", "alias", "updated", "actualizado")
 
 
 def _parse_capabilities(text: str, sections: tuple = _SEC_EXISTS) -> list[dict]:
@@ -1784,6 +1795,193 @@ def _all_capabilities(sections: tuple = _SEC_EXISTS) -> list[dict]:
         for cap in _parse_capabilities(content or "", sections):
             cap.update({"journal": name, "project": project, "path": path})
             out.append(cap)
+    return out
+
+
+# A Decided card can be overtaken by a later decision written as a plain entry while the card still states the
+# old rule. Real case 2026-10-30: the 2026-10-27 card said "Business Review 97 USD", the 2026-10-28 entry said
+# "the Business Review becomes FREE (replaces the 97 USD paid review)", and the map kept serving the old card as
+# current, so the session repeated it to the owner.
+_CHANGE_WORD = re.compile(r"\b(?:supersed\w*|replac\w*|overrid\w*|no longer|instead of|revert\w*|becomes|became|"
+                          r"reemplaz\w*|ya no|en lugar de|deja de)\b", re.I)
+# Ship and fix logs say "replaced" and "no longer" about files all day; only a decision, or an entry that says it
+# supersedes, changes a rule. A scan of the real Decided cards with any entry counted gave mostly false alarms.
+_DECISION_HEAD = re.compile(r"\[(?:decision|decided|decisi\w*|owner|correction|rule|pivot|direction)[^\]]*\]", re.I)
+_SUPERSEDES = re.compile(r"\bsupersed\w*", re.I)
+_ENTRY_DATE = re.compile(r"^## (\d{4}-\d{2}-\d{2})\b[^\n]*$", re.M)
+# A card that already opens with "SUPERSEDED <date> by ..." says it itself (the convention for history kept in Decided).
+_MARKED_SUPERSEDED = re.compile(r"\s*\[?(?:SUPERSEDED|REEMPLAZAD[AO])\b", re.I)
+
+
+def _card_terms(cap: dict) -> list[str]:
+    raw = str(cap.get("aliases") or cap.get("alias") or cap.get("keys") or cap.get("claves") or "")
+    out = []
+    for a in raw.split(","):
+        f = _fold(a.strip())
+        if (len(f) >= 3 or (f.isdigit() and len(f) >= 2)) and f not in out:
+            out.append(f)
+    return out
+
+
+def newer_change(cap: dict, text: str) -> Optional[dict]:
+    """The newest entry, dated after the card (or after its `updated:`), with a sentence that changes it: a
+    change word ("replaces", "becomes", "no longer"...) plus the card named by its date or by two of its aliases."""
+    if _MARKED_SUPERSEDED.match(str(cap.get("what", ""))):
+        return None
+    dates = {str(cap.get(k) or "")[:10] for k in ("date", "fecha", "updated", "actualizado")}
+    dates = {d for d in dates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)}
+    if not dates:
+        return None
+    since = max(dates)
+    terms = _card_terms(cap)
+    heads = list(_ENTRY_DATE.finditer(text))
+    found = None
+    for i, h in enumerate(heads):
+        if h.group(1) <= since:
+            continue
+        body = text[h.end(): heads[i + 1].start() if i + 1 < len(heads) else len(text)]
+        decision = bool(_DECISION_HEAD.search(h.group(0)))
+        for sent in re.split(r"(?<=[.;!?])\s+|\n+", body):
+            if not _CHANGE_WORD.search(sent):
+                continue
+            # "Supersedes the 2026-10-22 model and the 2026-10-23 line" speaks only to cards of those dates.
+            named_dates = set(re.findall(r"\d{4}-\d{2}-\d{2}", sent)) - {h.group(1)}
+            if not (decision or (_SUPERSEDES.search(sent) and named_dates)):
+                continue
+            if named_dates and not named_dates & dates:
+                continue
+            f = _fold(sent)
+            hit = [t for t in terms if re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", f)]
+            # Two loose words ("owner", "cards"; "studios", "mcp") match half the cards; a phrase or a number names one.
+            specific = any(" " in t or t.isdigit() for t in hit)
+            if len(hit) >= 3 or (len(hit) >= 2 and specific) or (named_dates and hit):
+                if not found or h.group(1) >= found["date"]:
+                    found = {"date": h.group(1), "heading": h.group(0)[3:].strip()[:120], "sentence": sent.strip()}
+                break
+    # A later card can replace this one too ("mapleworks.dev/live is a looping DEMO ... Replaces the earlier plan",
+    # see: "previous card (2026-10-24 plan)"): it names this card's date and uses a change word somewhere in it.
+    for other in _parse_capabilities(text, _SEC_DECIDED):
+        od = str(other.get("date") or other.get("fecha") or "")[:10]
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", od) or od <= since or other.get("what") == cap.get("what"):
+            continue
+        full = f'{other.get("what", "")} {other.get("detail", "")}'
+        if not _CHANGE_WORD.search(full):
+            continue
+        # The date must sit next to the change ("replaces the 2026-10-22 build prices card") or name a card
+        # ("previous card (2026-10-24 plan)"); a date in the card's list of sources says nothing.
+        segs = re.split(r"(?<=[.!?])\s+|\s+·\s+|;\s*", full)
+        if not any(set(re.findall(r"\d{4}-\d{2}-\d{2}", g)) & dates
+                   and (_CHANGE_WORD.search(g) or re.search(r"\bcard\b", g, re.I)) for g in segs):
+            continue
+        f = _fold(full)
+        hit = [t for t in terms if re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", f)]
+        if len(hit) >= 2 and (not found or od >= found["date"]):
+            found = {"date": od, "heading": "a later Decided card", "sentence": other.get("what", "")}
+    return found
+
+
+# A card can also be overtaken silently: a later ship entry just states a new value ("Precio: $27 como todos los
+# journals en la tienda") with no change word and no [decision] tag. Real case 2026-11-01: the 2026-08-04 card "Sold
+# journal prices stay high ($99 ...)" was served as the owner's rule while every journal had sold at $27 since
+# 2026-08-20; the session quoted $99 to the owner. Measured on the 280 real Decided cards with bge-m3: 0 false
+# alarms and the real case caught at a meaning floor of 0.62 (real 0.63; nearest false ones 0.60 and 0.61).
+_VALUE = re.compile(r"(?:US\$|\$)\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:usd|dolares|dólares)\b", re.I)
+_VALUE_FLOOR = 0.62
+_VALUE_GENERIC = set("""price prices precio precios cost costs cuesta value valor dollars dolares month year once only
+plus with this that from have each every""".split())
+
+
+def _values(t: str) -> set:
+    out = set()
+    for m in _VALUE.finditer(t):
+        try:
+            out.add(float((m.group(1) or m.group(2)).replace(",", "")))
+        except ValueError:
+            pass
+    return out
+
+
+def _value_neighbors(t: str, w: int = 6) -> set:
+    """Word stems within w words of each money value: what the number is the price OF ("$99 for the flagship journals")."""
+    toks = re.findall(r"\$?[\w$.,/-]+", _fold(t))
+    out = set()
+    for i, tk in enumerate(toks):
+        if "$" in tk and re.search(r"\d", tk) or (re.fullmatch(r"[\d,.]+", tk) and i + 1 < len(toks)
+                                                   and toks[i + 1] in ("usd", "dolares")):
+            for x in toks[max(0, i - w): i + w + 1]:
+                x = re.sub(r"[^a-z]", "", x)
+                if len(x) >= 4 and x not in _STOP and x not in _VALUE_GENERIC:
+                    out.add(x[:6])
+    return out
+
+
+def newer_value(cap: dict, text: str, timeout: float = 2.5) -> Optional[dict]:
+    """The newest later entry that states a DIFFERENT value for the thing a one- or two-value card fixes (the same
+    word next to both numbers, and the sentence means the same as the card). Needs the meaning service: without it
+    nothing is claimed. Table rows are skipped: a price table lists other items of the same family."""
+    what = str(cap.get("what", ""))
+    if _MARKED_SUPERSEDED.match(what):
+        return None
+    cv = _values(what)
+    if not cv or len(cv) > 2:   # a card with many prices is a catalog: a new number is usually another item
+        return None
+    d = str(cap.get("date") or cap.get("fecha") or "")[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+        return None
+    cn = _value_neighbors(what)
+    if not cn:
+        return None
+    heads = list(_ENTRY_DATE.finditer(text))
+    cands = []
+    for i, h in enumerate(heads):
+        if h.group(1) <= d:
+            continue
+        body = text[h.end(): heads[i + 1].start() if i + 1 < len(heads) else len(text)]
+        for sent in re.split(r"(?<=[.;!?])\s+|\n+", h.group(0)[3:] + "\n" + body):
+            if sent.lstrip().startswith("|"):
+                continue
+            sv = _values(sent)
+            if not sv or sv & cv or not (_value_neighbors(sent) & cn):
+                continue
+            cands.append((h.group(1), h.group(0)[3:].strip()[:120], sent.strip()))
+    if not cands:
+        return None
+    cands = cands[-40:]   # the newest ones: the latest word is the one that counts
+    try:
+        import meaning
+        scores = meaning.score(what, [c[2][:400] for c in cands], timeout=timeout)
+    except Exception:
+        scores = []
+    best = None
+    for sc, (date, heading, sent) in zip(scores, cands):
+        if sc >= _VALUE_FLOOR and (not best or date >= best["date"]):
+            best = {"date": date, "heading": heading, "sentence": sent, "score": round(float(sc), 2)}
+    return best
+
+
+def _mark_changed(cards: list[dict]) -> list[dict]:
+    texts: dict = {}
+    out = []
+    for c in cards:
+        p = c.get("path")
+        if p and p not in texts:
+            try:
+                texts[p] = Path(p).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                texts[p] = ""
+        ch = newer_change(c, texts.get(p, "")) if p else None
+        if ch:
+            s = ch["sentence"] if len(ch["sentence"]) <= 130 else ch["sentence"][:127] + "..."
+            c = {**c, "changed_later": ch,
+                 "what": f'[CHANGED LATER {ch["date"]}: "{s}" Follow the newer entry and fix this card] ' + c["what"]}
+        else:
+            nv = newer_value(c, texts.get(p, "")) if p else None
+            if nv:
+                s = nv["sentence"] if len(nv["sentence"]) <= 130 else nv["sentence"][:127] + "..."
+                c = {**c, "changed_later": nv,
+                     "what": (f'[NEWER VALUE {nv["date"]}: "{s}" The latest entry wins: check the live source (site, '
+                              f'code, data) and, if it changed, mark this card SUPERSEDED now, without asking] ') + c["what"]}
+        out.append(c)
     return out
 
 
@@ -1841,6 +2039,8 @@ def _match_capabilities(query: str, project: str = "", limit: int = 6, min_cover
     # Decisions get more slack: showing one extra rule is cheap, missing the one that applies is not.
     slack = 2 if sections == _SEC_DECIDED else 1
     keep = [c for cov, _, c in scored if cov >= max(1, best - slack)][:limit]
+    if sections == _SEC_DECIDED:
+        keep = _mark_changed(keep)
     return [{k: v for k, v in c.items() if v} for c in keep]
 
 
@@ -1985,7 +2185,11 @@ def journal_quick(query: str, limit: int = 5) -> dict:
     """
     import quickmap
     m = quickmap.quick_map(query, limit)
-    m["text"] = quickmap.quick_map_text(m) or "Nothing recorded for this in any journal."
+    m["text"] = quickmap.quick_map_text(m)
+    # Meaning layer (2026-10-30): entries that say the same thing in other words or the other language.
+    mb = quickmap._meaning_block(query, "SAME MEANING (entries that say the same thing in any words or language):",
+                                 set(re.findall(r"[\w.-]+\.md:\d+", m["text"] or "")))
+    m["text"] = "\n".join(x for x in (mb, m["text"]) if x) or "Nothing recorded for this in any journal."
     return m
 
 

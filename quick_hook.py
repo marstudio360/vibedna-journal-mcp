@@ -434,6 +434,15 @@ def _tools_first(call: dict):
             rd = None
         if rd:
             lc = {"deny": rd["deny"] + ("\n\n" + lc["deny"] if lc else "")}
+        try:
+            # Already built (2026-11-01): a new script whose job a [ship]/[feature] entry already did, by meaning
+            # (four loop cutters were written while cut_loops.py and cut_sections.py sat in the AA journal).
+            import builtmap
+            bm = builtmap.check(call, seen)
+        except Exception:
+            bm = None
+        if bm:
+            lc = {"deny": bm["deny"] + ("\n\n" + lc["deny"] if lc else "")}
         _save(f, seen)
         if lc:
             r = {"deny": lc["deny"] + ("\n\n" + (r.get("deny") or r.get("note") or "") if r else "")}

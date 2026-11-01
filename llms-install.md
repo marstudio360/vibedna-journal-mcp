@@ -1,4 +1,4 @@
-# Install Journals DNA 1.2.0
+# Install Journals DNA 1.3.0
 
 **Journals DNA: your AI cannot skip your journal.** This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
@@ -91,6 +91,23 @@ updated, entries), and appends keep them current. Older journals can get the sam
 journals that another tool syncs or appends to, because 8 new lines at the top shift every `FILE.md:line`
 reference.
 
+## Search by meaning (optional)
+Your AI then finds the entry that says the same thing even when the question uses other words or another language
+("el cobro con tarjeta falla" finds "checkout retries a failed card once"). It runs on your computer's processor with
+a small multilingual model (about 220 MB, downloaded once into `~/.journal/meaning-model`); your journals never
+leave your machine. Without it, everything works with word search as before.
+```
+.venv/bin/pip install fastembed numpy
+.venv/bin/python meaning.py build      # one vector per journal entry; prints progress and time left
+.venv/bin/python meaning.py query "a question in your own words"
+```
+(Windows: `.venv\Scripts\pip install fastembed numpy`, then `.venv\Scripts\python meaning.py build`.)
+After the build, one small background service (one copy at most) answers the map and `journal_search`; it starts by
+itself and keeps new entries in sync. The small model finds most rephrasings, not all: a word with no close cousin in
+the other language (for example "boletin" for "newsletter") can still need the word search.
+Teams with a GPU machine can run `embed_server.py` there on a private address (a bigger model, better matches) and
+set `JOURNAL_MEANING_URL` on every computer; the index remembers which model made its vectors.
+
 ## Optional settings (environment variables)
 | Setting | What it does |
 |---|---|
@@ -104,6 +121,10 @@ reference.
 | `JOURNAL_ALIASES` | Extra synonym groups: `a,b,c;d,e` |
 | `JOURNAL_OUTBOX` | Where entries for a read-only journal are queued (default `~/journal-outbox`) |
 | `JOURNAL_TOOLS_MAP=0`, `JOURNAL_LIVECOPY=0`, `JOURNAL_RULEDUPES=0` | Turn off one check of the mod |
+| `JOURNAL_MEANING_OFF=1` | Turn off the search by meaning |
+| `JOURNAL_MEANING_URL` | A team embedding service (`embed_server.py` on a private address) instead of the local model |
+| `JOURNAL_MEANING_PORT` | Port of the local meaning service (default 47311) |
+| `JOURNAL_MEANING_MIN` | Lowest score shown as a meaning match (default 0.38 for the local model) |
 
 ## Rules your AI follows
 Write rules as dated lines in `RULES_JOURNAL.md` (or `OWNER_SAID_JOURNAL.md`, or any `*_RULES_JOURNAL.md`); see

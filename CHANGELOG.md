@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.0 (2026-11-01)
+
+Journals DNA: your AI finds what your journals mean, not only the words you used, and it never repeats an old
+decision as if it were still true.
+
+**Search by meaning (optional)**
+- Every journal entry gets one meaning vector from a small multilingual model that runs on your computer's processor
+  (no GPU, no account, your journals never leave your machine). A question in other words or in another language
+  finds the entry that says the same thing. `journal_search`, `journal_quick` and the map show these as
+  "SAME MEANING" lines first, mixed with the word search by rank.
+- Turn it on with `pip install fastembed numpy` and `python meaning.py build`. Without it everything works as before
+  with word search. One small background service holds the model (one copy at most, one indexer at a time).
+- Teams with a GPU machine can run `embed_server.py` on a private address and point every computer at it with
+  `JOURNAL_MEANING_URL` (a bigger model, better results); the index remembers which model made its vectors.
+
+**It stops rebuilding what already exists**
+- "Already built": when your AI is about to write a new script, or launch an agent to build something, whose job a
+  `[ship]`, `[feature]` or `[build]` entry already did, it is shown that entry and the scripts it names, and stopped
+  once. Found by meaning, no cards to write by hand.
+
+**Old decisions never pass as current**
+- A `## Decided` card that a later decision replaced is shown with "CHANGED LATER" and the newer sentence first.
+- A card whose price or number a later entry states differently (for example a card says $99 and later entries say
+  $27) is shown with "NEWER VALUE": the latest entry wins, your AI checks the live source and marks the old card
+  SUPERSEDED in the same turn. Cards that list many prices are left alone (a new number there is usually another item).
+
+**Big journals stay fast**
+- `obsidian.py archive`: moves the older months of a big journal into one file per month, in two separate runs
+  (write with backup and manifest, then a verified trim that keeps anything appended in between).
+
 ## 1.2.0 (2026-10-30)
 
 Journals DNA: your AI cannot skip your journal. Everything since 1.0.6, in plain words.

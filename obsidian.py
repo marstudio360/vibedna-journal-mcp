@@ -681,6 +681,121 @@ def write_text_atomic(p: Path, content: str) -> None:
     os.replace(tmp, p)
 
 
+# ─── Monthly archive of a big journal ─────────────────────────────────────────
+# A journal over ~1 MB is slow in Obsidian and one over ~5 MB can freeze it (owner GO 2026-10-30 to split
+# TONE_GARDEN_JOURNAL.md, 2.5 MB). Dated entries of older months move to <STEM>_<YYYY-MM>.md beside it; the head and
+# every living section (pending, handoff, current state, already exists, decided, rules) stay. Two separate runs, never
+# preserve and delete together: "archive --write" writes the month files + a backup + a manifest; "archive --trim"
+# checks every moved block is in its month file byte for byte, then rewrites the journal keeping anything appended since.
+
+_DATED = re.compile(r"^## (\d{4})-(\d{2})-\d{2}")
+_LIVING = ("pending", "pendiente", "handoff", "current state", "estado actual", "already exists", "ya existe",
+           "decided", "ya decidido", "rules", "reglas", "how to use", "roadmap", "brain map", "archive")
+
+
+def _blocks(text: str) -> tuple[str, list[dict]]:
+    """(head, blocks): head = everything before the first dated H2; each block starts at an H2 line. An undated H2
+    after the head belongs to the month of the entry above it, unless it is a living section (kept, month None)."""
+    nl = "\r\n" if "\r\n" in text[:20000] else "\n"
+    parts = re.split(r"(?m)(?=^## )", text)
+    head, blocks, month, seen_dated = "", [], None, False
+    for p in parts:
+        m = _DATED.match(p)
+        if m:
+            seen_dated, month = True, f"{m.group(1)}-{m.group(2)}"
+            blocks.append({"text": p, "month": month})
+        elif not seen_dated:
+            head += p
+        else:
+            title = p.split(nl, 1)[0][3:].strip().lower()
+            living = any(w in title for w in _LIVING)
+            blocks.append({"text": p, "month": None if living else month})
+    return head, blocks
+
+
+def _archive_paths(journal: Path, months: list[str]) -> dict[str, Path]:
+    return {m: journal.with_name(f"{journal.stem}_{m}.md") for m in months}
+
+
+def archive_write(journal: Path, keep_from: str, apply: bool = False) -> dict:
+    """Step 1: write each older month's entries to <STEM>_<YYYY-MM>.md (only if that file does not exist yet), a full
+    backup under _archive/ (never indexed) and a manifest of what moved. The journal itself is not touched."""
+    journal = Path(journal)
+    text = journal.read_bytes().decode("utf-8")
+    head, blocks = _blocks(text)
+    old = [b for b in blocks if b["month"] and b["month"] < keep_from]
+    months = sorted({b["month"] for b in old})
+    paths = _archive_paths(journal, months)
+    nl = "\r\n" if "\r\n" in text[:20000] else "\n"
+    rep = {"journal": str(journal), "bytes": len(text.encode()), "moving_blocks": len(old),
+           "moving_bytes": sum(len(b["text"].encode()) for b in old), "months": {}, "written": apply,
+           "exists": []}
+    for m in months:
+        body = "".join(b["text"] for b in old if b["month"] == m)
+        rep["months"][m] = len(body.encode())
+        if paths[m].exists():
+            rep["exists"].append(str(paths[m]))
+    if not apply or rep["exists"]:
+        return rep
+    today = datetime.now().strftime("%Y-%m-%d")
+    for m in months:
+        body = "".join(b["text"] for b in old if b["month"] == m)
+        top = (f"# {journal.stem} archive {m}{nl}{nl}Entries of {m} moved out of [[{journal.stem}]] on {today} so the "
+               f"live journal stays fast to open and read. Search finds them as usual; the live journal links here."
+               f"{nl}{nl}")
+        paths[m].write_bytes((top + body).encode("utf-8"))
+    bak = journal.parent / "_archive" / f"{journal.stem}.full_{today}.md"
+    bak.parent.mkdir(exist_ok=True)
+    bak.write_bytes(text.encode("utf-8"))
+    manifest = {"journal": str(journal), "keep_from": keep_from, "prefix_sha": hashlib.sha256(text.encode()).hexdigest(),
+                "prefix_len": len(text.encode()), "backup": str(bak),
+                "moved": [{"month": b["month"], "sha": hashlib.sha256(b["text"].encode()).hexdigest()} for b in old]}
+    (journal.parent / "_archive" / f"{journal.stem}.manifest.json").write_text(json.dumps(manifest, indent=1),
+                                                                              encoding="utf-8")
+    rep["backup"] = str(bak)
+    return rep
+
+
+def archive_trim(journal: Path, apply: bool = False) -> dict:
+    """Step 2: rewrite the journal without the moved blocks, after checking each one is in its month file byte for
+    byte and that the journal still starts with what step 1 read (anything appended since is kept)."""
+    journal = Path(journal)
+    man = json.loads((journal.parent / "_archive" / f"{journal.stem}.manifest.json").read_text(encoding="utf-8"))
+    raw = journal.read_bytes()
+    pre = raw[:man["prefix_len"]]
+    if hashlib.sha256(pre).hexdigest() != man["prefix_sha"]:
+        return {"ok": False, "why": "the journal changed above the end it had at step 1 (not only appended): run step 1 again"}
+    tail = raw[man["prefix_len"]:].decode("utf-8")
+    head, blocks = _blocks(pre.decode("utf-8"))
+    moved = {x["sha"] for x in man["moved"]}
+    months = sorted({x["month"] for x in man["moved"]})
+    paths = _archive_paths(journal, months)
+    for m in months:
+        have = paths[m].read_bytes().decode("utf-8") if paths[m].exists() else ""
+        for b in blocks:
+            if b["month"] == m and hashlib.sha256(b["text"].encode()).hexdigest() in moved and b["text"] not in have:
+                return {"ok": False, "why": f"a moved entry is missing from {paths[m].name}: nothing trimmed"}
+    keep = [b["text"] for b in blocks if hashlib.sha256(b["text"].encode()).hexdigest() not in moved]
+    nl = "\r\n" if "\r\n" in head[:20000] else "\n"
+    links = nl.join(f"- [[{paths[m].stem}]] ({m})" for m in months)
+    section = (f"## Archive{nl}{nl}Older entries, one file per month (moved {datetime.now():%Y-%m-%d}; search finds "
+               f"them too):{nl}{links}{nl}{nl}")
+    head = re.sub(r"(?ms)^## Archive\b.*?(?=^## |\Z)", "", head)
+    new = head + section + "".join(keep) + tail
+    rep = {"ok": True, "before": len(raw), "after": len(new.encode()), "kept_blocks": len(keep),
+           "removed_blocks": len(blocks) - len(keep), "appended_since": len(tail.encode()), "written": apply}
+    if apply:
+        now = journal.read_bytes()
+        if now[:len(raw)] != raw:
+            return {"ok": False, "why": "the journal changed while trimming: run step 2 again"}
+        new += now[len(raw):].decode("utf-8")
+        fd, tmp = tempfile.mkstemp(prefix="." + journal.name + ".", suffix=".tmp", dir=str(journal.parent))
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(new.encode("utf-8"))
+        os.replace(tmp, journal)
+    return rep
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 
 def _print_frontmatter_report(rep: dict, apply: bool) -> None:
@@ -723,7 +838,19 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--root", required=True)
     v.add_argument("--apply", action="store_true", help="write (default is a dry run)")
     v.add_argument("--out", help="write the vault files into this folder instead of the root (a preview)")
+    r = sub.add_parser("archive", help="move older months of a big journal into one file per month (two steps)")
+    r.add_argument("journal")
+    r.add_argument("--keep-from", default=datetime.now().strftime("%Y-%m"), help="first month that stays (YYYY-MM)")
+    g = r.add_mutually_exclusive_group(required=True)
+    g.add_argument("--write", action="store_true", help="step 1: write month files, backup and manifest")
+    g.add_argument("--trim", action="store_true", help="step 2: check them, then remove the moved entries")
+    r.add_argument("--apply", action="store_true", help="write (default is a dry run)")
     args = ap.parse_args(argv)
+    if args.cmd == "archive":
+        rep = archive_write(Path(args.journal), args.keep_from, args.apply) if args.write \
+            else archive_trim(Path(args.journal), args.apply)
+        print(json.dumps(rep, indent=1))
+        return 0 if rep.get("ok", True) and not rep.get("exists") else 1
     if args.cmd == "add-frontmatter":
         roots = [Path(r) for r in args.root] if args.root else list(rules()[4]())
         if not roots:

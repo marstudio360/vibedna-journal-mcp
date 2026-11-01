@@ -2686,6 +2686,18 @@ def git_only(cmd: str) -> bool:
                              r"[^;&|]*(?:&&\s*|;\s*)?)+\s*", bare))
 
 
+def _meaning_block(q: str, title: str, skip: set = frozenset(), k: int = 5) -> str:
+    """Entries that say the same thing as q in any words or language (meaning.py, 2026-10-30). Every lexical layer
+    missed questions phrased differently (\"embudo de Foundations\" vs \"SELECTOR DE COMPRA\"); this is the base layer,
+    the word rules stay as a second signal. Empty when the meaning service is not up (it starts itself)."""
+    try:
+        import meaning
+    except Exception:
+        return ""
+    hits = [h for h in meaning.query(q, k=k + 3) if f"{h['journal']}:{h['line']}" not in skip]
+    return (title + "\n" + "\n".join(meaning.text_lines(hits, k))) if hits else ""
+
+
 def quick_hook(call: dict, prompt: bool = False):
     """Claude Code hook. Tool calls: before editing a file (or running a command that writes or reaches a
     server), show its quick map; the first touch of a piece in the Brain map is denied until the session
@@ -2821,6 +2833,14 @@ def quick_hook(call: dict, prompt: bool = False):
             mine = _my_work_text({_fold(w) for w in re.findall(r"[A-Za-zÀ-ÿ0-9]+", text)}, company)
             if mine:
                 maps.insert(0, mine)
+        # Meaning first (2026-10-30): the whole message, as written, against every journal entry.
+        q_msg = re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw).strip()
+        if len(re.findall(r"\w+", q_msg)) >= 3:
+            mb = _meaning_block(q_msg, "SAME MEANING AS THIS MESSAGE (journal entries that say the same thing, in any "
+                                "words or language; open the ones that fit before answering):",
+                                set(re.findall(r"[\w.-]+\.md:\d+", "\n".join(maps))))
+            if mb:
+                maps.insert(0, mb)
         if maps:
             out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext":
                    "\n\n".join(maps) + "\n(Quick map from the journals. Open what it points to before acting; "
