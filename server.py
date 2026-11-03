@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 PRODUCT_SLUG = "journal"
 
 
@@ -334,7 +334,7 @@ _JOURNAL_PATTERNS = [
 ]
 
 # "fixtures": test copies of real journals (tests/fixtures/shapesmith_20261028 held a 10-28 snapshot of CREATIVE_HUB
-# and VIBEDNA_FULL) were indexed as live journals, 52 stale entries in every map and reply check (found 2026-10-29).
+# and SHOP_FULL) were indexed as live journals, 52 stale entries in every map and reply check (found 2026-10-29).
 _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", "_archive", "venv", ".venv", "dist", "build", "fixtures"}
 # Throwaway git worktrees of a project ("vibedna-site-wt-audio", "-wt-perf") hold stale copies of its journals: every
 # search showed the same journal three times (2026-10-30). They are skipped.
@@ -1297,6 +1297,66 @@ def _with_warning(res: dict, warning: str) -> dict:
     return res
 
 
+# A lesson written in a living journal often belongs in a refined manual too (a journal you sell or hand to others),
+# and nothing carried it there. Real case 2026-11-01: the non-expiring system user token for the ad account was
+# learned 2026-10-15 and written in two other projects' journals, so the sold "Run Meta Ads With Your AI" kept
+# teaching a sixty-day token for two more weeks. Measured with bge-m3 on 150 random entries vs the refined manuals'
+# sections: that entry scores 0.644; the random p90 is 0.631 and what sits above it is mostly a real lesson for a manual.
+_MANUAL_FLOOR = 0.62
+_MANUAL_SKIP_TAGS = {"reading", "measure", "medicion", "state", "handoff", "work", "ops", "check", "change", "cambio",
+                     "note", "watchlist", "preview", "take", "todo", "pendiente", "pending"}
+
+
+_MANUAL_TASK = ("The Message is a new journal entry. The Entries are sections of field manuals written for any reader "
+                "(sold to people building their own projects). Which section would a reader of that manual need this "
+                "lesson in, as a general lesson for their own work? A section that only shares words, or a lesson that "
+                "is only about our own internal tools, accounts or setup, is NOT relevant.")
+
+
+def manual_hint(path: str, entry: str, tag: str = "") -> Optional[dict]:
+    """The refined manual (kind=refined) whose section means the same as this new entry, when the entry is a lesson
+    and not a reading or an operational change. Needs the meaning service; without it nothing is claimed."""
+    t = (tag or "").strip().strip("[]").lower()
+    if t in _MANUAL_SKIP_TAGS or len(entry.strip()) < 200:
+        return None
+    c = _conn()
+    try:
+        rows = c.execute("SELECT path, name FROM journals WHERE kind='refined'").fetchall()
+    except Exception:
+        rows = []
+    finally:
+        c.close()
+    # The same file can arrive as a long or a short (8.3) Windows path: compare resolved, case-folded paths.
+    norm = lambda p: os.path.normcase(os.path.realpath(str(p)))
+    if not rows or norm(path) in {norm(r[0]) for r in rows} or _classify_kind(str(path), {}) == "refined":
+        return None
+    refined = {r[0] for r in rows}
+    folders = {str(Path(p).parent) for p in refined}
+    try:
+        import meaning
+        hits = []
+        for f in sorted(folders)[:4]:
+            hits += meaning.query(entry[:1500], k=3, min_score=_MANUAL_FLOOR, path_like=f, timeout=2.0)
+    except Exception:
+        return None
+    # min_score gates only the meaning half: a hit found by words alone carries its real (lower) cosine, checked here
+    hits = [h for h in hits if h.get("path") in refined and float(h.get("score", 0)) >= _MANUAL_FLOOR]
+    if not hits:
+        return None
+    hits = sorted(hits, key=lambda x: -float(x.get("score", 0)))[:6]
+    # Similarity only proposes; the judge decides (2026-11-03: a status-line fix of the journals mod was pointed at the
+    # Meta Ads manual at 0.69, a Social Engine correction at the post pilot manual). No judge: the old behaviour.
+    rel = _judge(entry[:1500], [f"{x.get('journal')}: {x.get('heading')}" for x in hits], task=_MANUAL_TASK)
+    if rel is not None:
+        if not rel:
+            return None
+        hits = [hits[rel[0]]]
+    h = max(hits, key=lambda x: x.get("score", 0))
+    return {"journal": h.get("journal"), "section": h.get("heading"), "score": round(float(h.get("score", 0)), 2),
+            "hint": (f'This may belong in the manual {h.get("journal")} (section "{h.get("heading")}"): if the lesson '
+                     "holds beyond this project, add it there in the same turn, written for any reader.")}
+
+
 @mcp.tool()
 def journal_append(name_or_path: str = "", entry: str = "", tag: str = "", section_header: str = "",
                    text: str = "", content: str = "", body: str = "", project: str = "", journal: str = "", name: str = "", path: str = "") -> dict:
@@ -1360,8 +1420,55 @@ def journal_append(name_or_path: str = "", entry: str = "", tag: str = "", secti
             c.close()
     except Exception:
         pass
-    return _with_warning({"ok": True, "path": str(path), "appended_bytes": len(header) + len(body),
-                          "new_size_kb": round(path.stat().st_size / 1024, 1)}, warning)
+    synced, judged_bg = [], False
+    if _STATE_TAG.search(f"{tag_part}{first_line}"):
+        try:
+            import judge as _jm
+            judged_bg = _jm.available()
+        except Exception:
+            judged_bg = False
+        if judged_bg:
+            # the judge takes ~5 s: it marks the cards in the background so the append returns at once
+            import threading
+
+            def _bg(p=path, t=ts, h=f"{tag_part}{first_line}", e=entry):
+                try:
+                    if _sync_cards_after_append(p, t, h, e):
+                        c2 = _conn()
+                        try:
+                            _reindex_path(c2, str(p))
+                            c2.commit()
+                        finally:
+                            c2.close()
+                except Exception:
+                    pass
+            threading.Thread(target=_bg, daemon=False).start()
+        # Without a judge nothing is written into the cards: the identity rule marked an unrelated card of
+        # AI_TEAM_JOURNAL on 2026-11-03 ("Switch all the box companies to another the AI Max account" for an entry
+        # about the relevance judge). A wrong mark in a journal is worse than none; reads still show latest_word.
+    if synced:
+        try:
+            c = _conn()
+            try:
+                _reindex_path(c, str(path))
+                c.commit()
+            finally:
+                c.close()
+        except Exception:
+            pass
+    res = {"ok": True, "path": str(path), "appended_bytes": len(header) + len(body),
+           "new_size_kb": round(path.stat().st_size / 1024, 1)}
+    if synced:
+        res["cards_updated"] = synced
+    if judged_bg:
+        res["cards_check"] = "the judge marks the cards this entry changes, in the background (a few seconds)"
+    try:
+        mh = manual_hint(str(path), entry, tag)
+    except Exception:
+        mh = None
+    if mh:
+        res["manual_hint"] = mh
+    return _with_warning(res, warning)
 
 
 def _new_frontmatter(name: str, body: str = "") -> str:
@@ -1634,6 +1741,13 @@ def _journal_search_impl(query: str, project: str = "", kind: str = "", limit: i
                 used_fts = True
         except Exception:
             used_fts = False
+        exact = _exact_ids(query)
+        if exact:
+            lit = _literal_entries(c, exact, project, limit)
+            if lit:
+                lit_paths = {r["path"] for r in lit}
+                results = (lit + [r for r in results if r.get("path") not in lit_paths])[:limit]
+                used_fts = True
         if not used_fts:
             rows = c.execute("SELECT path, name, project, mtime FROM journals ORDER BY mtime DESC").fetchall()
             q_lower = query.lower()
@@ -1684,11 +1798,19 @@ def _journal_search_impl(query: str, project: str = "", kind: str = "", limit: i
         out["current_state_note"] = ("current_state = matching lines of the journal's Current state section: they win over "
                                      "any older entry in the snippet, unless current_state_stale says newer work "
                                      "shipped after it. Entries marked SUPERSEDED are history.")
-    exists = _match_capabilities(query, project)
+    # one judge call for both lists (~4.5 s), not one per list
+    ex_raw = _prep_cards(query, _match_capabilities(query, project))
+    de_raw = _prep_cards(query, _match_capabilities(query, project, sections=_SEC_DECIDED))
+    both = (ex_raw + de_raw)[:20]
+    rel = _judge(query, [str(c.get("what", "")) for c in both]) if both else None
+    n_ex = min(len(ex_raw), 20)
+    rel_ex = None if rel is None else [i for i in rel if i < n_ex]
+    rel_de = None if rel is None else [i - n_ex for i in rel if i >= n_ex]
+    exists = _search_cards(query, ex_raw, judged=rel_ex)
     if exists:
         out["already_exists"] = exists
         out["note"] = "already_exists = things that are built and working: extend them, do not rebuild. Open every match that could matter."
-    decided = _match_capabilities(query, project, sections=_SEC_DECIDED)
+    decided = _search_cards(query, de_raw, judged=rel_de)
     if decided:
         out["already_decided"] = decided
         out["decided_note"] = ("already_decided = what the owner already decided: follow it, do not re-propose it "
@@ -1727,6 +1849,11 @@ def journal_search(query: str, project: str = "", kind: str = "", limit: int = 1
     try:
         import meaning
         hits = meaning.query(query, k=8, path_like=project)
+        # 2026-11-03 live test: "203.0.113.65" listed four "Incidents" section headers at 0.40-0.54 by meaning alone.
+        # A hit found by meaning only needs the same floor as the owner-message map; word-backed hits stay.
+        hits = [h for h in hits if "words" in str(h.get("by", "")) or float(h.get("score", 0)) >= SAME_MEANING_FLOOR]
+        if _only_exact_ids(query):
+            hits = []   # an exact identifier has exact results; its split digits ("203", "113") only match noise
         if hits and isinstance(res, dict):
             res["same_meaning"] = hits
             res["same_meaning_note"] = "same_meaning = entries whose meaning matches the query (any language); open the top ones even when the word ranking missed them."
@@ -1758,7 +1885,7 @@ def _find_section(text: str, names: tuple) -> Optional[tuple[str, str]]:
 
 
 _CARD_KEYS = ("status", "estado", "since", "desde", "see", "ver", "keys", "claves", "how", "cómo", "como",
-              "why", "porque", "date", "fecha", "aliases", "alias", "updated", "actualizado")
+              "why", "porque", "date", "fecha", "aliases", "alias", "updated", "actualizado", "latest")
 
 
 def _parse_capabilities(text: str, sections: tuple = _SEC_EXISTS) -> list[dict]:
@@ -2041,7 +2168,306 @@ def _match_capabilities(query: str, project: str = "", limit: int = 6, min_cover
     keep = [c for cov, _, c in scored if cov >= max(1, best - slack)][:limit]
     if sections == _SEC_DECIDED:
         keep = _mark_changed(keep)
+    else:
+        keep = _mark_newer_ship(keep)
     return [{k: v for k, v in c.items() if v} for c in keep]
+
+
+# NEWEST WORD WINS (owner 2026-11-03: "the memory has to find the truth, not make us tiptoe when we write journals").
+# A card is a summary someone wrote once; the truth is the newest entry about the same thing. Measured on 17 real
+# cards: by meaning alone the card that started this ("ADSCOPE 4.0 ... ranked winners", status NOT deployed) never
+# reached its own "[ship] ADSCOPE 4.0 DEPLOYED" entry (it describes what the tool does, the entry what happened to it);
+# identity does: the card's names, versions and file names that are rare in that journal's headings. Meaning (>= 0.62,
+# on-topic pairs measured 0.59-0.70, noise up to 0.60) is the second signal, only where speed allows it.
+_STATE_TAG = re.compile(r"\[(ship|deploy\w*|fix|live|decision|decided|correction|change|update|incident|rule|pivot|"
+                        r"gap|status|paus\w*|remov\w*|retir\w*)[^\]]*\]", re.I)
+_HEAD_FULL = re.compile(r"^## (\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?([^\n]*)", re.M)
+_ID_TOKEN = re.compile(r"(?<![\w.-])(?:[A-Z][A-Z0-9]{3,}|[a-z]+[A-Z]\w+|[A-Za-z]\w*(?:[_.-]\w+)+|v?\d+\.\d+(?:\.\d+)?|v\d+)(?![\w-])")
+_VERSION = re.compile(r"(?<![\w.])v?\d+\.\d+(?:\.\d+)?(?![\w.])|(?<![\w.])v\d+(?![\w.])", re.I)
+LATEST_MEANING_FLOOR = float(os.environ.get("JOURNAL_LATEST_MEANING_FLOOR") or 0.62)
+# Words the journals write in capitals for emphasis, never names of a thing.
+_COMMON_CAPS_WORDS = set("""full only never always every nothing none must real live done fixed owner note rule
+rules new old same each other also before after first last next here there what when where which while with without
+from into onto over under above below more most less least very just still also free paid best worst good bad wrong
+right true false open closed stop stopped start started ready shipped deployed built tested broken working check
+checked verified unverified pending urgent important warning error errors issue issues problem problems fix fixes
+update updated change changed changes again once twice today tomorrow yesterday week month year daily weekly
+monthly hard soft main core base part parts whole entire both all any some many much few last lost won missing
+then than that this these those they them their your yours ours mine because since until unless instead also
+para todo todos nunca siempre nada solo ahora antes despues mismo misma nuevo nueva viejo vieja""".split())
+
+
+def _card_identity(cap: dict, heads: list) -> set:
+    """Names, versions and file names of a card that were rare (<= 20%) among its journal's headings BEFORE the card:
+    "4.0" is rare before the 4.0 card even if every later entry names it; "adscope" is everywhere in its own journal."""
+    # what + how; hand-written cards ("**what**: how · status...") keep the how only in detail
+    src = f"{cap.get('what', '')} {cap.get('how') or str(cap.get('detail') or '').split(' · ')[0]}"
+    toks = {_fold(t).strip(".-_") for t in _ID_TOKEN.findall(src)}
+    toks = {t for t in toks if len(t) >= 3 and not t.isdigit() and t not in _STOP}
+    # a common word written in capitals for emphasis ("the FULL owner app") is not a name (2026-11-03 live test:
+    # "full" tied an HQ branding card to an unrelated "reply cards show the full reply" fix)
+    toks = {t for t in toks if not (t.isalpha() and t in _COMMON_CAPS_WORDS)}
+    if not heads:
+        return toks
+    limit = max(1, len(heads) * 0.2)
+    return {t for t in toks if sum(1 for h in heads if t in h) <= limit}
+
+
+def latest_word(cap: dict, use_meaning: bool = True) -> Optional[dict]:
+    """The newest state-changing entry (ship, fix, decision, correction...) of the card's own journal, dated on or after
+    the card, that names the same thing (identity) or, when use_meaning, means the same (>= LATEST_MEANING_FLOOR)."""
+    path = cap.get("path")
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    since = str(cap.get("since") or cap.get("desde") or cap.get("date") or cap.get("fecha") or "")[:10]
+    if not since:
+        # a card that reached us without its fields (the quick map's entity cards): read it from its journal
+        for full in _parse_capabilities(text, _SEC_EXISTS) + _parse_capabilities(text, _SEC_DECIDED):
+            if full.get("what") == cap.get("what"):
+                cap = {**full, **{k: v for k, v in cap.items() if v}}
+                since = str(full.get("since") or full.get("desde") or full.get("date") or full.get("fecha") or "")[:10]
+                break
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
+        return None
+    heads = []
+    for m in _HEAD_FULL.finditer(text):
+        heads.append((m.group(1) + " " + (m.group(2) or "00:00"), m.group(3).strip(), text.count("\n", 0, m.start()) + 1,
+                      text[m.end():m.end() + 300].replace("\n", " ")))
+    folded = [_fold(h[1]) for h in heads]
+    before = [f for h, f in zip(heads, folded) if h[0][:10] < since]
+    # no history before the card: every name of it is new, nothing to filter; the journal's own name never counts
+    stem = {w for w in re.split(r"[^a-z0-9]+", _fold(Path(path).stem)) if w and w != "journal"}
+    toks = {t for t in _card_identity(cap, before) if t not in stem}
+    card_ver = {_fold(v).lstrip("v") for v in _VERSION.findall(f"{cap.get('what', '')} {cap.get('how') or ''} "
+                                                              f"{str(cap.get('detail') or '').split(' · ')[0]}")}
+    cand = [(h, f) for h, f in zip(heads, folded) if h[0][:10] >= since and _STATE_TAG.search(h[1])]
+    if not cand:
+        return None
+    def other_version(f: str) -> bool:
+        # the entry names a version and none is this card's: it is about another version of the thing
+        vs = {v.lstrip("v") for v in _VERSION.findall(f)}
+        return bool(card_ver) and bool(vs) and not (vs & card_ver)
+    cand = [(h, f) for h, f in cand if not other_version(f)]
+    hit = [h for h, f in cand if any(re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", f) for t in toks)]
+    if use_meaning and len(cand) > len(hit):
+        rest = [h for h, _ in cand if h not in hit][-40:]
+        try:
+            import meaning
+            sc = meaning.score(f"{cap.get('what', '')} {cap.get('how', '')}"[:600], [f"{h[1]} {h[3]}" for h in rest])
+        except Exception:
+            sc = []
+        if sc and len(sc) == len(rest):
+            hit += [h for h, s in zip(rest, sc) if s >= LATEST_MEANING_FLOOR]
+    if not hit:
+        return None
+    when, title, line, _ = max(hit, key=lambda h: (h[0], h[2]))   # same minute: the later line is newer
+    return {"when": when, "line": line, "entry": re.sub(r"\s+", " ", title)[:160]}
+
+
+_CARD_TASK = ("A new journal entry was just written (the Message). The Entries are cards of the same journal: things "
+              "already built, or decisions. Which cards does the new entry report a change of (deployed, fixed, "
+              "replaced, decided, paused, removed, moved)? A card that only shares a word with it, or is about another "
+              "version or another thing, is NOT changed.")
+
+
+def _sync_cards_after_append(path: Path, ts: str, heading: str, entry: str = "", use_judge: bool = True) -> list:
+    """After a state-changing entry is appended: every card of the same journal that the entry changes gets
+    "· latest: <when> <entry>" (replacing an older latest); nothing else in the card is touched. The judge decides
+    which cards (owner 2026-11-03: no hand rules); without it, the identity rule of latest_word."""
+    if not _STATE_TAG.search(heading):
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    touched = []
+    caps = _parse_capabilities(text, _SEC_EXISTS) + _parse_capabilities(text, _SEC_DECIDED)
+    rel = None
+    if use_judge and caps:
+        rel = _judge(f"{heading}\n{entry[:1200]}",
+                     [f"{c.get('what', '')} | {c.get('how') or str(c.get('detail') or '').split(' · ')[0]}" for c in caps[:20]],
+                     task=_CARD_TASK)
+        # the judge took seconds: another session may have appended meanwhile, so mark the file as it is NOW
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return []
+    lines = text.split("\n")
+    for i, cap in enumerate(caps):
+        cap["path"] = str(path)
+        if rel is not None:
+            if i not in rel:
+                continue
+            lw = {"when": ts, "entry": re.sub(r"\s+", " ", heading)[:160]}
+        else:
+            lw = latest_word(cap, use_meaning=False)
+            if not lw or lw["when"] != ts:
+                continue
+        mark = " · latest: " + lw["when"] + " " + lw["entry"].replace(" · ", ", ").replace("**", "")
+        for i, ln in enumerate(lines):
+            if _CAP_LINE.match(ln) and f"**{cap['what']}**" in ln:
+                lines[i] = re.sub(r"\s+·\s+latest:.*?(?=\s+·\s+\w+:|$)", "", ln) + mark
+                touched.append(cap["what"][:120])
+                break
+    if touched:
+        _atomic_write(path, "\n".join(lines))
+    return touched
+
+
+# Exact identifiers (owner 2026-11-03, peer session): "203.0.113.65" became the term "203011365" and both journal_search
+# and journal_quick found nothing, although GROWTH_SAAS and PRODUCT_WARMER name that IP. IPs, host:port, @accounts,
+# hex ids and dotted numbers are searched literally in every journal before anything else.
+_EXACT_ID = re.compile(r"(?<![\w.])(?:\d{1,3}(?:\.\d{1,3}){3}(?::\d{2,5})?|@[A-Za-z0-9_.]{2,}[A-Za-z0-9_]|"
+                       r"[A-Za-z][\w-]*:\d{2,5}|[0-9a-f]{7,40}(?=[^\w]|$)|[A-Za-z]*\d+(?:\.\d+){1,3}[A-Za-z]*)(?![\w.])")
+
+
+def _exact_ids(query: str) -> list:
+    out = []
+    for m in _EXACT_ID.finditer(query or ""):
+        t = m.group(0)
+        if re.fullmatch(r"[0-9a-f]{7,40}", t) and not (re.search(r"\d", t) and re.search(r"[a-f]", t)):
+            continue   # a plain number or word is not a hex id
+        if t not in out:
+            out.append(t)
+    return out[:4]
+
+
+def _judge(q: str, texts: list, task: str = "") -> Optional[list]:
+    """judge.judge when a judge is available; None otherwise (judge off, or no claude command)."""
+    try:
+        import judge
+    except Exception:
+        return None
+    return judge.judge(q, texts, task) if task else judge.judge(q, texts)
+
+
+def _only_exact_ids(query: str) -> bool:
+    """The query is nothing but exact identifiers ("203.0.113.65", "@demoacct_ 203.0.113.65")."""
+    ids = _exact_ids(query)
+    rest = query or ""
+    for i in ids:
+        rest = rest.replace(i, " ")
+    return bool(ids) and not re.search(r"\w", rest)
+
+
+def _literal_entries(c, ids: list, project: str = "", limit: int = 10) -> list:
+    """Journal entries that contain an exact identifier as written, one result per journal, newest entries first."""
+    names = {p: (n, pr) for p, n, pr in c.execute("SELECT path, name, project FROM journals").fetchall()}
+    per = {}
+    for ident in ids:
+        phrase = '"' + " ".join(re.findall(r"[A-Za-z0-9_]+", ident)) + '"'
+        try:
+            rows = c.execute("SELECT path, line, heading, body FROM entries_fts WHERE entries_fts MATCH ? LIMIT 400",
+                             (phrase,)).fetchall()
+        except Exception:
+            rows = []
+        lit = re.compile(r"(?<![\w.])" + re.escape(ident.lower()) + r"(?![\w])")
+        for p, ln, h, b in rows:
+            body = f"{h or ''}\n{b or ''}"
+            m = lit.search(body.lower())
+            if not m:
+                continue
+            n, pr = names.get(p, (Path(p).name, ""))
+            if project and not _project_match(pr, n, project):
+                continue
+            snip = body[max(0, m.start() - 80):m.end() + 80].replace("\n", " ")
+            per.setdefault(p, {"name": n, "project": pr, "path": p, "score": 100.0, "terms_matched": "exact",
+                               "snippet": snip, "entries": []})["entries"].append(
+                {"heading": (h or "")[:120], "line": int(ln), "snippet": snip})
+    out = list(per.values())
+    for r in out:
+        r["entries"].sort(key=lambda e: e["heading"], reverse=True)
+        r["entries"] = r["entries"][:3]
+    return out[:limit]
+
+
+SEARCH_CARD_FLOOR = float(os.environ.get("JOURNAL_SEARCH_CARD_FLOOR") or 0.40)
+SAME_MEANING_FLOOR = float(os.environ.get("JOURNAL_PROMPT_MEANING_FLOOR") or 0.58)   # same number as the quick map
+
+
+def _prep_cards(query: str, cards: list) -> list:
+    """One copy per card; for a code-name query only the cards that contain the name (see _search_cards)."""
+    seen_what, uniq = set(), []
+    for c in cards:
+        w = str(c.get("what", ""))[:200]
+        if w not in seen_what:
+            seen_what.add(w)
+            uniq.append(c)
+    ids = {_fold(t) for t in re.findall(r"[A-Za-z0-9]+(?:[_.-][A-Za-z0-9]+)+", query) if not re.fullmatch(r"[\d.]+", t)}
+    if ids:
+        uniq = [c for c in uniq if any(i in _fold(" ".join(str(v) for v in c.values())) for i in ids)]
+    return uniq
+
+
+def _search_cards(query: str, cards: list, keep: int = 3, judged="ask") -> list:
+    """Cards for journal_search: the best few by meaning, without the 'detail' field (it repeats how, status, see and
+    keys). 2026-11-03: a search for "owner_answer_guard" returned twelve cards (office game, logos, US$200 credits),
+    ~15 KB per call. Measured against 6 real queries: on-topic cards 0.44-0.56, the worst noise 0.27-0.38; the
+    middle overlaps, so the order decides and the floor only drops the clear misses. Unchanged when the meaning
+    service does not answer, apart from the detail field."""
+    # one copy per card (a journal and its company mirror); a code name ("owner_answer_guard") is matched as written:
+    # only cards that contain it, else none (2026-11-03: its meaning pulled a reply-capture card and WORKING NOW)
+    cards = _prep_cards(query, cards)
+    slim = [{k: v for k, v in c.items() if k not in ("detail", "keys", "aliases")} for c in cards]
+    # The judge decides when it is there (exam: 91% vs 85% for similarity); similarity is the fallback.
+    rel = (_judge(query, [str(c.get("what", "")) for c in cards]) if cards else None) if judged == "ask" else judged
+    if rel is not None:
+        cards, slim = [cards[i] for i in rel][:keep], [slim[i] for i in rel][:keep]
+    elif len(slim) > 1:
+        try:
+            import meaning
+            sc = meaning.score(query.replace("|", " ").replace(";", " "), [str(c.get("what", ""))[:400] for c in cards])
+        except Exception:
+            sc = []
+        if sc and len(sc) == len(slim):
+            ranked = sorted(zip(sc, range(len(slim))), key=lambda x: -x[0])
+            keep_i = [i for s, i in ranked if s >= SEARCH_CARD_FLOOR][:keep]
+            cards, slim = [cards[i] for i in keep_i], [slim[i] for i in keep_i]
+    # The newest word next to each card: the truth is the newest entry, the card is a summary (owner 2026-11-03).
+    for c, s in zip(cards, slim):
+        try:
+            lw = latest_word(c, use_meaning=False)   # with meaning a search took 10.7 s (2026-11-03); identity: ~2 s
+        except Exception:
+            lw = None
+        if lw and lw["when"] > str(c.get("latest") or "")[:16]:
+            s["latest_word"] = f"{lw['when']} ({c.get('journal')}:{lw['line']}): {lw['entry']}"
+    return slim
+
+
+_NOT_DONE = re.compile(r"\b(not deployed|not yet|not live|not installed|not wired|partial|pending|broken|stalled)\b", re.I)
+_SHIP_HEAD = re.compile(r"^## (\d{4}-\d{2}-\d{2})(?: \d{2}:\d{2})? \[(ship|deploy|fix|live)\][^\n]*", re.M)
+
+
+def _mark_newer_ship(caps: list) -> list:
+    """A card that says a thing is not done, while a later ship entry of the same journal names that thing as deployed.
+    2026-11-03: the ADSCOPE card said "NOT deployed on gpubox yet" five days after "[ship] ADSCOPE 4.0 DEPLOYED on
+    gpubox"; journal_search served the card as fact and the owner was told 4.0 was never installed."""
+    for cap in caps:
+        how = str(cap.get("how") or "")
+        name = re.match(r"\s*([A-Za-z][\w-]{2,})", how)
+        if not _NOT_DONE.search(str(cap.get("status") or "")) or not cap.get("path") or not name:
+            continue
+        nm = _fold(name.group(1))
+        ver = re.findall(r"\b\d+\.\d+(?:\.\d+)?\b", how[:60])
+        since = str(cap.get("since") or "")[:10]
+        try:
+            text = Path(cap["path"]).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for m in _SHIP_HEAD.finditer(text):
+            d, head = m.group(1), _fold(m.group(0))
+            if since and d < since:
+                continue
+            if re.search(r"(?<![a-z0-9])" + re.escape(nm) + r"(?![a-z0-9])", head) and (
+                    any(v in head for v in ver) or re.search(r"\b(deployed|live|installed|running)\b", head)):
+                cap["status_newer"] = (f"NEWER {m.group(2).upper()} ENTRY {d}: {m.group(0)[3:160].strip()}. This card's "
+                                       "status may be stale: read that entry, check live, then fix the card.")
+                break
+    return caps
 
 
 @mcp.tool()
@@ -2185,10 +2611,32 @@ def journal_quick(query: str, limit: int = 5) -> dict:
     """
     import quickmap
     m = quickmap.quick_map(query, limit)
-    m["text"] = quickmap.quick_map_text(m)
+    shown = set(re.findall(r"[\w.-]+\.md:\d+", quickmap.quick_map_text(m) or ""))
     # Meaning layer (2026-10-30): entries that say the same thing in other words or the other language.
-    mb = quickmap._meaning_block(query, "SAME MEANING (entries that say the same thing in any words or language):",
-                                 set(re.findall(r"[\w.-]+\.md:\d+", m["text"] or "")))
+    hits = []
+    if not _only_exact_ids(query):
+        try:
+            import meaning
+            hits = [h for h in meaning.query(query, k=8) if f"{h['journal']}:{h['line']}" not in shown
+                    and ("words" in str(h.get("by", "")) or float(h.get("score", 0)) >= SAME_MEANING_FLOOR)]
+        except Exception:
+            hits = []
+    # The judge keeps only the cards and same-meaning entries really about the query (one call, ~4.5 s), owner
+    # 2026-11-03: "why do we keep doing this with hand-made rules". Without a judge everything above stays.
+    cand = ([("decided", x) for x in m.get("decided", [])] + [("exists", x) for x in m.get("exists", [])]
+            + [("hit", h) for h in hits])
+    rel = _judge(query, [str(x.get("what") or x.get("heading") or "") for _, x in cand]) if cand else None
+    if rel is not None:
+        keep = {id(cand[i][1]) for i in rel}
+        m["decided"] = [x for x in m.get("decided", []) if id(x) in keep]
+        m["exists"] = [x for x in m.get("exists", []) if id(x) in keep]
+        hits = [h for h in hits if id(h) in keep]
+        m["judged"] = True
+    m["text"] = quickmap.quick_map_text(m)
+    mb = ""
+    if hits:
+        import meaning
+        mb = "SAME MEANING (entries that say the same thing in any words or language):\n" + "\n".join(meaning.text_lines(hits, 5))
     m["text"] = "\n".join(x for x in (mb, m["text"]) if x) or "Nothing recorded for this in any journal."
     return m
 

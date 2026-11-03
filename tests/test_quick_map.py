@@ -288,8 +288,10 @@ def test_reads_carry_a_journal_note_once_per_user_message():
     first = _proc(read)["hookSpecificOutput"]
     assert first["permissionDecision"] == "deny" and "SHOP_JOURNAL.md" in first["permissionDecisionReason"]
     assert "attempt 2" in _proc(read)["hookSpecificOutput"]["permissionDecisionReason"]
-    # Reading the journal file itself is never gated; once it ran (the mod reports it), the read passes.
-    assert _proc({**read, "tool_input": {"file_path": str(_ROOT / "SHOP" / "SHOP_JOURNAL.md")}}) == {}
+    # Reading the journal file itself is never gated (since 5fd26db it may carry the hand-read hint, never a deny);
+    # once it ran (the mod reports it), the read passes.
+    jr = _proc({**read, "tool_input": {"file_path": str(_ROOT / "SHOP" / "SHOP_JOURNAL.md")}})
+    assert "permissionDecision" not in (jr.get("hookSpecificOutput") or {})
     _proc({**read, "tool_input": {"journal_read": str(_ROOT / "SHOP" / "SHOP_JOURNAL.md"), "ok": True}})
     assert _proc(read) == {}
     assert _proc({"session_id": sid, "cwd": cwd, **rr, "tool_name": "Bash", "tool_input": {"command": "cat SHOP/site/worker.js"}}) == {}

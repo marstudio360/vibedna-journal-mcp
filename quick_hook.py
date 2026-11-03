@@ -41,8 +41,11 @@ MAX_FOLDER_JOURNALS = 5  # a folder with more journals than this at its top is a
 # session's own scratch and saved tool output (a sed of an enter() reply stopped a Director).
 EXEMPT_PATH = re.compile(
     r"(^|/)(AGENTS|CLAUDE)\.md$|(^|/)STARTUP_[^/]*\.md$|/manuals/[^/]*\.md$"
-    r"|^(/private)?/tmp/claude-[^/]+/|/\.claude/projects/[^/]+/tool-results/")
+    r"|^(/private)?/tmp/claude-[^/]+/|/\.claude/projects/[^/]+/(tool-results|memory)/")
+# 2026-11-03: the AI's own memory folder (an index plus notes, some with "journal" in their name) was gated as project
+# "memory" asking to read reference_boltlab_infra_validator_journal.md before editing MEMORY.md.
 GATE_ESCAPE_AT = 3  # attempts: the 3rd opens the gate when a read is impossible (no journal file, or reads fail)
+READ_FRESH_S = 1800  # a journal read this recent opens its gate, whatever message it happened in
 
 
 def _fold(w: str) -> str:
@@ -152,6 +155,15 @@ def record_read(call: dict):
     for k in keys:
         seen.setdefault("jr", {})[k] = n
         seen.setdefault("jt", {})[k] = now
+    # Direct reads only (not every journal a search result happened to list) say which project the session is on:
+    # the owner brief follows them (2026-11-03: a code_sync search listed AI_TEAM and DIRECTOR journals and their
+    # briefs replaced Oddsboard's on "bueno como va").
+    direct = "journal_tool" not in ti or str(ti.get("journal_tool") or "").rsplit("__", 1)[-1] in (
+        "journal_read", "journal_read_section", "journal_handoff_brief")
+    if direct and ok:
+        jc = seen.setdefault("jc", {})
+        for k in keys:
+            jc[k] = [int((jc.get(k) or [0, 0])[0]) + 1, now]
     _save(f, seen)
 
 
@@ -168,7 +180,12 @@ def gate(seen: dict, gkey: str, journals: list, files: list, what: str) -> tuple
     n = int(seen.get("n", 0))
     jr, jt = seen.get("jr", {}), seen.get("jt", {})
     since = st["at"] if isinstance(st, dict) else None
-    if any(jr.get(k) == n or (since is not None and jt.get(k, 0) >= since) for k in keys):
+    # A read in the last 30 minutes counts too (2026-11-03: a session read ADSCOPE_JOURNAL by full path, then a
+    # message from another session bumped the message counter and the next two Reads were stopped "no read
+    # recorded"; the PC cleanup session was stopped 3 times the same way after reading the journal minutes before).
+    now = time.time()
+    if any(jr.get(k) == n or (since is not None and jt.get(k, 0) >= since) or now - float(jt.get(k, 0)) < READ_FRESH_S
+           for k in keys):
         g[gkey] = "open"
         return "open", ""
     j0 = journals[0] if journals else ""
@@ -270,6 +287,7 @@ def _folder_owns(hit, path: str, cwd: str) -> bool:
     return bool(jw & sw) or not sw
 
 
+GUARD_SUFFIX = re.compile(r"[-_](gate|guard|guards|mod|mods|hook|hooks)(?![a-z0-9])")
 HOME_PREFIX = re.compile(r"(?<![a-z0-9])(?:/home|/users)/[^/\s]+(?=/)")
 FILE_EXT = re.compile(r"(?<=[\w*-])\.[a-z][a-z0-9]{0,5}(?=$|[\s\"'/\\,;:)|])", re.I)
 
@@ -280,8 +298,12 @@ def _key_hit(keys: list, text: str) -> bool:
     text = HOME_PREFIX.sub("", text)
     # A file extension is a type, not a piece: "/src/pages/index.astro" is not the ASTRO project (2026-10-27).
     bare = FILE_EXT.sub("", text)
-    return any(len(k) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", text if "." in k else bare)
-               for k in keys)
+    # A guard named after a piece ("oddsboard-gate") is not the piece (2026-11-03: reading the gate's own code was
+    # stopped as the Real Oddsboard bot).
+    def hit(k: str, t: str) -> bool:
+        return any(not GUARD_SUFFIX.match(t, mo.end())
+                   for mo in re.finditer(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", t))
+    return any(len(k) >= 3 and hit(k, text if "." in k else bare) for k in keys)
 
 
 def read_turn(call: dict):
@@ -498,12 +520,75 @@ def _soft_for_agents(out: str) -> str:
                                               "additionalContext": reason}}, ensure_ascii=False)
 
 
+HAND_READ = re.compile(r"\b(grep|rg|cat|sed|head|tail|less|awk|wc|egrep)\b[^|;&]*_JOURNAL[\w.-]*\.md")
+
+
+def hand_read_hint(call: dict):
+    """A raw Read / cat / sed / grep of a *_JOURNAL.md is allowed, but the journal tools do it in one call and the
+    dogfood report counts it as the top outside-tool move (2026-11-03: 8 of the top 10, 7 roles). Print a note that
+    names the exact call with the file filled in; once per journal per user message; never blocks."""
+    ti = call.get("tool_input") or {}
+    fp = str(ti.get("file_path") or "")
+    cmd = str(ti.get("command") or "")
+    if call.get("tool_name") == "Read" and JOURNAL_MD.search(fp):
+        names = [fp.replace("\\", "/").rsplit("/", 1)[-1]]
+    elif cmd and not WRITE_CMD.search(cmd) and HAND_READ.search(cmd[:4000]):
+        names = [x.rsplit("/", 1)[-1] for x in _names_in(cmd[:4000])]
+    else:
+        return
+    names = [x for x in names if x and not SCRATCH_MD.search(x)][:1]
+    if not names:
+        return
+    f, seen = _state(call)
+    n = int(seen.get("n", 0))
+    hh = seen.setdefault("hh", {})
+    k = jkey(names[0])
+    if not k or hh.get(k) == n:
+        return
+    hh[k] = n
+    _save(f, seen)
+    j = names[0]
+    ctx = (f"JOURNALS: you are reading {j} by hand. The journal tools return the same text in one call and the read "
+           f"counts as done: journal_read(name=\"{j}\", offset=<first line>, limit=<lines>) for a line range, "
+           f"journal_read_section(\"{j}\", \"<section name>\") for one section, journal_handoff_brief(\"{j}\") "
+           f"for the Handoff and rules, journal_search(\"<topic>\") to find the entry. This is a note, nothing is blocked.")
+    return ctx
+
+
+def _with_hint(call: dict):
+    """read_turn plus the hand-read note as ONE json document: a deny is kept as is (no note), a context gets the
+    note appended, no output gets the note alone (QC 2026-11-03: two documents broke json.loads, the deny could drop)."""
+    import io
+    from contextlib import redirect_stdout
+    hint = hand_read_hint(call)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        read_turn(call)
+    out = buf.getvalue().strip()
+    if not hint:
+        if out:
+            print(out)
+        return
+    if not out:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": hint}},
+                         ensure_ascii=False))
+        return
+    try:
+        doc = json.loads(out)
+        h = doc["hookSpecificOutput"]
+        if "permissionDecision" not in h:
+            h["additionalContext"] = (h.get("additionalContext", "") + "\n\n" + hint).strip()
+        print(json.dumps(doc, ensure_ascii=False))
+    except Exception:
+        print(out)
+
+
 def main():
     raw = sys.stdin.read() or "{}"
     call = json.loads(raw)
     if "--prompt" in sys.argv and is_notification(call.get("prompt")):
         return
-    if "--prompt" in sys.argv or "--reply" in sys.argv or "--output" in sys.argv:
+    if "--prompt" in sys.argv or "--reply" in sys.argv or "--output" in sys.argv or "--stop" in sys.argv:
         return _main(call)
     agent = call.get("tool_name") in ("Agent", "Task")
     tm = _tools_first(call)
@@ -523,7 +608,8 @@ def _main(call: dict):
     prompt = "--prompt" in sys.argv
     reply = "--reply" in sys.argv
     output = "--output" in sys.argv
-    if reply or output:
+    stop = "--stop" in sys.argv
+    if reply or output or stop:
         pass  # the AI's finished reply, or what a command returned: checked against the owner's verdicts below
     elif prompt:
         if len(str(call.get("prompt") or "").strip()) < 3:
@@ -538,15 +624,19 @@ def _main(call: dict):
             return record_read(call)
         if call.get("tool_name") in READ_TOOLS or "paths" in ti or "query" in ti:
             if call.get("tool_name") == "Read" and JOURNAL_MD.search(fp):
-                return  # reading a journal is never gated (the mod records it after it ran)
-            return read_turn(call)
+                h = hand_read_hint(call)  # reading a journal is never gated (the mod records it after it ran)
+                if h:
+                    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": h}},
+                                     ensure_ascii=False))
+                return
+            return _with_hint(call)
         if fp:
             if JOURNAL_MD.search(fp):
                 return
         elif call.get("tool_name") in ("Agent", "Task"):
             pass   # an agent brief gets the intent map (it went to read_turn before 2026-10-26 and never got one)
         elif not WRITE_CMD.search(str(ti.get("command") or "")):
-            return read_turn(call)
+            return _with_hint(call)
     here = __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0]
     sys.path.insert(0, here)
     # The MCP library reads a .env from the working folder on import; a project's .env can be locked
@@ -559,6 +649,8 @@ def _main(call: dict):
     import quickmap
     if reply:
         return quickmap.reply_check(call)
+    if stop:
+        return quickmap.stop_check(call)
     if output:
         f, seen = _state(call)
         shown = set(seen.get("out_ids") or [])

@@ -30,6 +30,13 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
   number for it, the decision is shown with that newer line first and your AI checks the live source and updates it.
 - **It stops rebuilding what already exists.** Before your AI writes a new script or briefs an agent to build
   something a shipped entry already did, it is shown that entry and stopped once.
+- **Your decisions guard the reply (optional).** Each project gets an owner brief: your rules, what you already tried
+  and lost, and the thread you approved. With the reply check on, a reply that proposes again what you rejected,
+  or describes one of your tools against its own sheet, is sent back for a rewrite before you read it.
+- **Old rules carry their newer word.** A rule or decision older than a week is shown with the newer entry that
+  changed it, so your AI never follows an outdated rule as current.
+- **A calm status line.** Under your prompt: `Journals DNA · active`, and one plain sentence only when something
+  real happens.
 - **Opens in Obsidian.** One command builds a map of all your journals for Obsidian: a START HERE page, a table view
   of every journal, and a canvas by folder. New journals are born with Obsidian properties.
 
@@ -38,7 +45,8 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | Part | What it is |
 |---|---|
 | `server.py` | The journal MCP server: 35 tools to read, search, write and keep journals (works with any MCP client) |
-| `quickmap.py`, `quick_hook.py` | The quick map and the checks the mod runs (local, no network, no AI) |
+| `quickmap.py`, `quick_hook.py` | The quick map and the checks the mod runs (local, no network; no AI unless you switch the judge on) |
+| `judge.py`, `owner_brief.py` | Optional: the judge (your `claude` command decides what is really relevant) and the owner brief of each project |
 | `toolmap.py`, `tool_concepts.json` | "A tool already does this": matches an action to the tools and flows your journals list |
 | `livecopy.py`, `ruledupes.py` | Warnings for a command on the wrong copy of a deployed folder, and for a rule written twice |
 | `obsidian.py` | Builds the Obsidian map of your journals |
@@ -48,6 +56,16 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | `install_mod.py` | One command that installs the server and the mod in Claude Code, and undoes it |
 | `examples/DEMO_PROJECT.md` | A small journal to try everything on (copy it as `DEMO_JOURNAL.md` into a test folder) |
 | `BRAIN_MAP_TEMPLATE.md`, `RULES_TEMPLATE.md` | Copy-paste starting points |
+
+## New in 1.4.0
+
+- A calm status line: `Journals DNA · active`, one plain sentence per real event, never internal wording.
+- Newer word on old rules: an old rule or decision is shown with the newer entry that changes it.
+- The reply check against your own decisions (opt in: `JOURNAL_REPLY_GATE=on` with the judge on): a reply that
+  breaks your rules or proposes again what you already lost is sent back before you read it, with the words quoted.
+- Judged manual hints: a lesson is pointed at one of your manuals only when the judge agrees it belongs there.
+- Your own tools in `tools.json`: a message that names one carries what it does today.
+- The judge is optional and off by default; without it the checks fall back to the rules of 1.3.0. See INSTALL.md.
 
 ## Install
 

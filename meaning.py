@@ -401,6 +401,10 @@ def text_lines(hits: list[dict], n: int = 4) -> list[str]:
 
 
 if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # a Windows console died on an emoji heading
+    except Exception:
+        pass
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "build":
         def pr(d, t, s):

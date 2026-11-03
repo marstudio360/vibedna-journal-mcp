@@ -18,9 +18,14 @@
 //     journal_quick, or a Read of a *_JOURNAL.md), the mod reports it to quick_hook.py: that record opens the gate
 //   - prompt.submit: a message that names something concrete (a Brain map key, a journal's name, or two common
 //     words that together point at one journal) carries its map; a word's map comes back a few messages later
+//   - classic.Stop: before the turn ends, the reply is judged against the owner brief (owner_brief.py) of the
+//     projects in play; a reply that breaks it is sent back for a rewrite in the same turn
 //   - turn.complete: the AI's finished reply, when it proposes something, is checked against what the owner already
 //     said (journal verdicts); the check rides into the next turn for the AI, never drawn in the chat
 //   - prompt.compose: a short fixed section in the system prompt, so the habit is part of every turn
+//   - the status line is for the person, never for the AI: a quiet "Journals DNA · active", reset at every message,
+//     and one plain sentence only when something real happens in that turn (2026-11-03: the owner saw the internal
+//     "journals: a tool already does this, use it or say why not" stuck under his prompt, in words meant for the AI)
 // Config (environment): JOURNAL_MCP_DIR = folder of the journal tool's server.py; JOURNAL_PYTHON = python to use.
 import type { Register } from 'claude-code'
 
@@ -31,6 +36,18 @@ const JOURNAL_FILE = /journal[^\\/]*\.md$/i
 const READ = /^(Read|Grep|Glob)$/
 const DATA = /^mcp__(?!journal__).*(sql|query)/i
 const JOURNAL_READ_TOOL = /^mcp__journal__journal_(read|read_section|handoff_brief|search|quick)$/
+const JOURNAL_SAVE_TOOL = /^mcp__journal__journal_(append|update_section|decision_add|capability_add)$/
+
+// What the person sees under the prompt: calm by default, one plain sentence for a real event.
+const ACTIVE = 'Journals DNA · active'
+const SAID = {
+  read: 'Journals DNA · reading your notes on this first',
+  tool: 'Journals DNA · using a tool you already have instead',
+  decided: 'Journals DNA · found what you already decided on this',
+  saved: 'Journals DNA · saved to your journal',
+  fixed: 'Journals DNA · fixing a reply that went against your notes',
+}
+const DECIDED = /OWNER BRIEF|DECIDED:|already decided|the owner already said/i
 
 const BRAIN = [
   'JOURNALS (one brain). Every project keeps its context in a *_JOURNAL.md.',
@@ -51,17 +68,19 @@ function resultText(ran: any): string {
   try { return typeof ran?.result === 'string' ? ran.result : JSON.stringify(ran?.result ?? '') } catch { return '' }
 }
 
-async function quick($: any, call: Record<string, unknown>, prompt: boolean | 'reply' | 'output'): Promise<Out | null> {
+async function quick($: any, call: Record<string, unknown>, prompt: boolean | 'reply' | 'output' | 'stop'): Promise<Out | null> {
   const dir = await $.env.get('JOURNAL_MCP_DIR')
   if (!dir) return null
   const py = (await $.env.get('JOURNAL_PYTHON')) || 'python3'
-  const flag = prompt === 'reply' ? ['--reply'] : prompt === 'output' ? ['--output'] : prompt ? ['--prompt'] : []
+  const flag = prompt === 'reply' ? ['--reply'] : prompt === 'output' ? ['--output'] : prompt === 'stop' ? ['--stop']
+    : prompt ? ['--prompt'] : []
   const argv = [py, `${dir}/quick_hook.py`, ...flag]
   try {
     const r = await $.process.run(argv, {
       // reports_reads: this mod reports journal reads, so the gate may wait for one (older mods never did).
       stdin: JSON.stringify({ ...call, reports_reads: true, session_id: await $.session.id(), cwd: await $.session.cwd() }),
-      timeoutMs: 15000,
+      // The owner brief asks the judge model (~5 s; the stop check reads a whole reply).
+      timeoutMs: prompt === 'stop' || prompt === true ? 30000 : 15000,
       env: { PYTHONIOENCODING: 'utf-8' },
     })
     if (r.exitCode !== 0 || !r.stdout.trim()) return null
@@ -115,12 +134,15 @@ export const register: Register = on => {
       const ran: any = await next(e)
       await report($, e, ran)
       return ran
+    } else if (JOURNAL_SAVE_TOOL.test(e.tool)) {
+      const ran: any = await next(e)
+      if (ran?.deny === undefined && ran?.isError !== true) $.ui.status(SAID.saved)
+      return ran
     }
     if (!input) return next(e)
     const out = await quick($, { tool_name: e.tool, tool_input: input }, false)
     if (out?.permissionDecision === 'deny' && out.permissionDecisionReason) {
-      $.ui.status(out.permissionDecisionReason.startsWith('TOOLS THAT ALREADY DO THIS')
-        ? 'journals: a tool already does this, use it or say why not' : 'journals: read its journal, then retry')
+      $.ui.status(out.permissionDecisionReason.startsWith('TOOLS THAT ALREADY DO THIS') ? SAID.tool : SAID.read)
       return { deny: out.permissionDecisionReason }
     }
     const ran: any = await next(e)
@@ -151,8 +173,27 @@ export const register: Register = on => {
     return r
   })
 
+  // Before the turn ends: the finished reply against the owner brief of the projects in play. A reply that proposes
+  // again what the owner rejected or already saw lose is sent back for a rewrite in the same turn (2026-11-03: the
+  // check above rode into the next turn, after the owner had read the repeated proposal and had to correct it).
+  on('classic.Stop', async ($, e: any, next) => {
+    const r: any = await next(e)
+    if (r?.block || e.stop_hook_active || !e.last_assistant_message) return r
+    const out: any = await quick($, { reply: e.last_assistant_message, stop_hook_active: false }, 'stop')
+    if (!out?.block) return r
+    $.ui.status(SAID.fixed)
+    return { ...r, block: String(out.block) }
+  })
+
+  on('session.start', async ($, e, next) => {
+    $.ui.status(ACTIVE)
+    return next(e)
+  })
+
   on('prompt.submit', async ($, e, next) => {
+    $.ui.status(ACTIVE)
     const out = await quick($, { prompt: e.text }, true)
+    if (out?.additionalContext && DECIDED.test(out.additionalContext)) $.ui.status(SAID.decided)
     const ctx = [...(e.context ?? [])]
     if (replyNote) { ctx.push(replyNote); replyNote = '' }
     if (out?.additionalContext) ctx.push(out.additionalContext)

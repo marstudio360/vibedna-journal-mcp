@@ -65,6 +65,9 @@ def _quick_terms(text: str) -> list[str]:
     return out[:4]
 
 
+_GUARD_SUFFIX = re.compile(r"[-_](gate|guard|guards|mod|mods|hook|hooks)(?![a-z0-9])")
+
+
 def _map_rows(query: str, terms: list[str]) -> list[dict]:
     """Rows of any journal's '## Brain map' table (| Piece | Keys | Working on it now | Read first | Notes |)
     whose keys match the query or its file name. The older heading 'Brain map' is read too."""
@@ -95,10 +98,17 @@ def _map_rows(query: str, terms: list[str]) -> list[dict]:
             if len(cells) < 4 or cells[0].lower() in ("piece", "") or set(cells[0]) <= set("-: "):
                 continue
             keys = [_fold(k.strip()) for k in cells[1].split(",") if k.strip()]
-            # Whole words only: "appuser" must not match the typo "mbaicos" (2026-10-24).
-            whole = lambda k, text: bool(text) and re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", text)
+            # Whole words only: "appuser" must not match the typo "mbaicos" (2026-10-24). A guard named after a piece
+            # ("oddsboard-gate") is not the piece (2026-11-03: editing the gate's own tests was stopped as the
+            # Real Oddsboard bot).
+            whole = lambda k, text: bool(text) and any(
+                not _GUARD_SUFFIX.match(text, mo.end())
+                for mo in re.finditer(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", text))
             hit = any((len(k) >= 3 and ((whole(k, q) or whole(k, stem)) if "." in k
-                                        else (whole(k, q_bare) or whole(k, stem_bare)))) or k in terms
+                                        else (whole(k, q_bare) or whole(k, stem_bare))))
+                      # a file path is matched on the path itself above; its split words would bring back
+                      # "oddsboard" from "oddsboard-gate" (2026-11-03)
+                      or (k in terms and not stem)
                       # a multi-word key needs ALL its words: "real" of real_test.py is not the "real bot" piece
                       # (2026-10-27: a Playwright check of the HQ app was stopped as the Real Oddsboard bot)
                       or (len(k.split()) > 1 and all(t in terms for t in k.split())) for k in keys)
@@ -512,6 +522,13 @@ def _entities_in(text: str, kinds: tuple = ("company", "key", "journal", "card")
                 continue
             ph = " ".join(toks[i:i + n])
             hit = idx.get(ph)
+            if not hit and n == 2:
+                # A name written as two words: "Ad Scope" is ADSCOPE (2026-11-02: the map searched "radar" and never
+                # showed ADSCOPE_JOURNAL). Joined, with the first word's plural "s" dropped too.
+                for j in (toks[i] + toks[i + 1], toks[i].rstrip("s") + toks[i + 1]):
+                    if len(j) >= 6 and idx.get(j):
+                        ph, hit = j, idx.get(j)
+                        break
             if not hit or hit[0] not in kinds or any(e["name"] == ph for e in found):
                 continue
             if n == 1:
@@ -719,7 +736,9 @@ def _entity_cards(ents: list[dict], groups: list[dict]) -> tuple[list[dict], lis
         (dec if card["k"] == "decided" else exi).append((best, h, card.get("date") or "", card))
     pick = lambda xs, n: [x[3] for x in sorted(xs, key=lambda x: (x[0], x[1], x[2]), reverse=True)[:n]]
     return ([{"what": x["what"], "journal": x["journal"], "date": x.get("date")} for x in pick(dec, 3)],
-            [{"what": x["what"], "status": x.get("status"), "journal": x["journal"], "how": x.get("how")} for x in pick(exi, 2)])
+            [{"what": x["what"], "status": x.get("status"), "journal": x["journal"], "how": x.get("how"),
+              "path": x.get("path"), "since": x.get("since"), "latest": x.get("latest"),
+              "status_newer": x.get("status_newer")} for x in pick(exi, 2)])
 
 
 # Owner verdicts on things already tried live in plain dated entries ("Veredicto de Owner sobre Glowcam Ray 3.2 ...:
@@ -1141,7 +1160,7 @@ _ROOT_NAMES = None
 
 def _journal_identity(name: str, path: str) -> set:
     """The words that say which project a journal belongs to: its name, plus its folder when that folder is not
-    one of the roots (HIGH TIDE MUSIC/SOCIAL_AUTOPILOT_JOURNAL.md is a High Tide journal)."""
+    one of the roots (HIGH TIDE MUSIC/POST_PILOT_JOURNAL.md is a High Tide journal)."""
     global _ROOT_NAMES
     if _ROOT_NAMES is None:
         from server import _default_roots
@@ -1629,6 +1648,19 @@ def output_check(call: dict, shown: set) -> set:
                 continue
             found.setdefault(v["said"], [[], v])[0].append(t)
             hit.add(t)
+    # Context (2026-11-03): an identifier in the output ("session_id", "api_business_journal") pulled verdicts about
+    # other things (an Tone Garden copy rejection, Calmapp). A verdict is shown only when it means something close to
+    # what the command was for (its description); without the meaning service the old behavior stays.
+    ctx = str((call.get("tool_input") or {}).get("description") or "")
+    if found and ctx:
+        try:
+            import meaning
+            sc = meaning.score(ctx, list(found.keys()))
+        except Exception:
+            sc = []
+        if sc and len(sc) == len(found):
+            found = {s: nv for (s, nv), x in zip(list(found.items()), sc) if x >= OUTPUT_CONTEXT_FLOOR}
+            hit = {t for names, _ in found.values() for t in names}
     lines = [f"- {', '.join(names)}: the owner already said ({v['when']}, {v['journal']}:{v['line']}): {s}"
              for s, (names, v) in found.items()]
     if lines:
@@ -1638,18 +1670,35 @@ def output_check(call: dict, shown: set) -> set:
     return hit
 
 
+def _proposal_part(body: str) -> str:
+    """The lines where the reply proposes something: a line with a proposal word and the lines under it until a
+    blank line (a "Propuesta:" header and its list)."""
+    out, take = [], False
+    for ln in body.splitlines():
+        if _PROPOSES.search(ln):
+            take = True
+        elif not ln.strip():
+            take = False
+        if take:
+            out.append(ln)
+    return "\n".join(out)
+
+
 def _verdict_lines(text: str) -> list[str]:
     body = re.sub(r"`[^`]*`|\S*[\\/]\S*|https?://\S+", " ", text)
+    # Things are taken only from what the reply PROPOSES (2026-11-03: "Oddsboard" and "SOL" written as examples of
+    # noise in an explanation pulled August wallet verdicts; the proposal paragraph named neither).
+    cbody = _proposal_part(body) or body
     cands = []
     # Capitalized or mixed-case words that do not open a sentence or a list line name things (Glowcam, Blender, Veo).
     # A word right after "**" opens a bold label ("- **Mapa rápido:**"), not a thing (2026-10-28: "mapa" pulled a
     # July Dreamfield loop insight into a reply about the journals mod).
-    for m in re.finditer(r"(?<![.!?:¿¡\n*#|-]\s)(?<!^)(?<!\*)\b([A-Z][a-zA-Z0-9]{2,}|[a-z]+[A-Z][A-Za-z0-9]+)\b", body):
+    for m in re.finditer(r"(?<![.!?:¿¡\n*#|-]\s)(?<!^)(?<!\*)\b([A-Z][a-zA-Z0-9]{2,}|[a-z]+[A-Z][A-Za-z0-9]+)\b", cbody):
         w = _fold(m.group(1))
         if (w not in _STOP and w not in _CHAT_WORDS and w not in cands and len(w) >= 3 and w not in _TIME_WORDS
                 and not any(w in b.split() for b in _BRAND_NAMES)):
             cands.append(w)
-    for e in _entities_in(body):
+    for e in _entities_in(cbody):
         # a company name is context, never the thing proposed (same rule as the pending check)
         if e["name"] not in cands and e["name"] not in _BRAND_NAMES and e.get("kind") != "company":
             cands.append(e["name"])
@@ -1693,8 +1742,29 @@ def quick_map(query: str, limit: int = 5, cards: bool = True, context: str = "")
     context: the rest of the message the query word came from; it ranks the named thing's cards and plans."""
     terms = _quick_terms(query)
     all_terms = list(terms)
-    if not terms:
+    # An exact identifier (IP, host:port, @account, hex id, dotted number) is looked up literally first (2026-11-03:
+    # "203.0.113.65" gave terms [] and an empty map although two journals name that IP).
+    from server import _exact_ids, _literal_entries
+    exact = _exact_ids(query) if not re.search(r"[\\/]", query) else []
+    lit = []
+    if exact:
+        c = _conn()
+        try:
+            _sync_changed(c)
+            lit = _literal_entries(c, exact, "", 6)
+        finally:
+            c.close()
+    if not terms and not lit:
         return {"query": query, "terms": []}
+    if lit and (not terms or all(t.isdigit() for t in terms)):
+        about = [{"when": (re.match(r"(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)", e["heading"]) or [""])[0] or "undated",
+                  "journal": r["name"], "line": e["line"], "entry": e["heading"][:160]} for r in lit for e in r["entries"]]
+        about.sort(key=lambda x: x["when"], reverse=True)
+        return {"query": query, "terms": exact, "pieces": [], "verdicts": [], "newer": {}, "shipped": [],
+                "stale_marks": {}, "stale_state": [], "journals": [{"journal": r["name"], "entries": len(r["entries"]),
+                                                                     "path": r["path"]} for r in lit],
+                "about": about[:limit], "vault": [], "decided": [], "exists": [], "latest": [], "pending": [],
+                "entities": [], "plans": []}
     c = _conn()
     try:
         if c.execute("SELECT COUNT(*) FROM entries_meta").fetchone()[0] == 0:   # first run: index BEFORE the Brain map is read
@@ -1784,7 +1854,9 @@ def quick_map(query: str, limit: int = 5, cards: bool = True, context: str = "")
         decided = [{"what": x.get("what"), "journal": x.get("journal"), "date": x.get("date")}
                    for x in _match_capabilities(words, limit=8, min_cover=len(terms), sections=_SEC_DECIDED)
                    if x.get("journal") in near and (not is_file or has_name(x))][:3]
-        exists = [{"what": x.get("what"), "status": x.get("status"), "journal": x.get("journal"), "see": x.get("see")}
+        exists = [{"what": x.get("what"), "status": x.get("status"), "journal": x.get("journal"), "see": x.get("see"),
+                   "path": x.get("path"), "since": x.get("since"), "how": x.get("how"), "latest": x.get("latest"),
+                   "status_newer": x.get("status_newer")}
                   for x in _match_capabilities(words, limit=8, min_cover=len(terms)) if x.get("journal") in near_exists][:3]
     ents, plans, entity_about = [], [], []
     if cards:
@@ -1799,7 +1871,16 @@ def quick_map(query: str, limit: int = 5, cards: bool = True, context: str = "")
             ents += [e for e in _entities_in(query.replace(chr(92), "/").replace("/", " / "), kinds=("company",))
                      if all(e["name"] != x["name"] for x in ents)]
         qgroups = _query_groups(gtext + " " + context, ents)
-        plans = _open_plans(qgroups, ents)
+        plans = [p for p in _open_plans(qgroups, ents) if not _plan_superseded(p)]
+        # A journal named by the query ("Ad Scope" -> ADSCOPE_JOURNAL) leads the journals list even when its
+        # words alone did not bring it (2026-11-03 live test: the list showed three other journals).
+        for e in ents:
+            if e.get("kind") == "journal":
+                h = str(e.get("home") or e["name"])
+                jp = _journal_by_name(h if h.lower().endswith(".md") else h.upper() + ".md")
+                if jp and all(p != jp for _, p in home):
+                    home = [(per_path.get(jp, 0), jp)] + home[:2]
+                    names.setdefault(jp, Path(jp).name)
         if ents:
             ea = _entity_about(ents, qgroups)
             about = [x for x in about if all(x[2] != y["line"] or names.get(x[1]) != y["journal"] for y in ea)]
@@ -1810,6 +1891,7 @@ def quick_map(query: str, limit: int = 5, cards: bool = True, context: str = "")
             # path brought cards that merely mention it (2026-10-26).
             decided = merge(decided, ed, 3) if is_file else (ed or decided)[:3]
             exists = merge(exists, ee, 3) if is_file else (ee or exists)[:3]
+    exists = _annotate_latest(exists)
     for p in ([p for _, p in home] if cards else []):
         try:
             text = Path(p).read_text(encoding="utf-8", errors="replace")
@@ -1862,7 +1944,12 @@ def quick_map(query: str, limit: int = 5, cards: bool = True, context: str = "")
     return {"query": query, "terms": terms, "pieces": pieces[:2], "verdicts": verdicts, "newer": nb,
             "shipped": [{k: v for k, v in s.items() if k not in ("path", "ctx")} for s in shipped],
             "stale_marks": stale_marks, "stale_state": stale_state[:2],
-            "journals": [{"journal": names.get(p, Path(p).name), "entries": n, "path": p} for n, p in home],
+            # The journal named after the term comes first (2026-11-02: "radar" listed three bigger journals and
+            # never ADSCOPE_JOURNAL, the one that owns it).
+            "journals": sorted(({"journal": names.get(p, Path(p).name), "entries": n, "path": p} for n, p in home),
+                               key=lambda j: 0 if any(str(t).replace(" ", "") and str(t).replace(" ", "")
+                                                      in _fold(Path(j["path"]).stem).replace("_", "")
+                                                      for t in terms) else 1),
             "about": (entity_about + [{"when": k[1], "journal": names.get(p, Path(p).name), "line": ln, "entry": h[:160]}
                                       for k, p, ln, h in about])[:3],
             "vault": [dict(r, latest=_vault_latest(r.get("name", ""))) for r in _vault_rows(terms)],
@@ -1948,6 +2035,11 @@ def quick_map_text(m: dict) -> str:
         L.append(f"- ABOUT IT {e['when']}: {e['entry']} ({e['journal']}:{e['line']}){mark(e)}" + st(e["entry"]))
     for v in m.get("verdicts", []):
         L.append(f"- OWNER SAID ON IT ({v['when']}, {v['journal']}:{v['line']}): {v['said']}")
+    if m.get("verdicts") and not m.get("decided"):
+        # 2026-11-02: "Adscope becomes a Shopsite product" lived only as a bullet in an entry; no Decided card, so
+        # no session treated it as a standing decision and the product stalled at the last step.
+        L.append("- NOT CARDED: none of the OWNER SAID lines above is a Decided card yet. If one is a standing decision, "
+                 "add it with journal_decision_add so every session follows it.")
     if m.get("journals"):
         L.append("- Journals: " + ", ".join(f"{j['journal']} ({j['entries']} entries)" for j in m["journals"]))
     for d in m.get("decided", []):
@@ -1955,7 +2047,9 @@ def quick_map_text(m: dict) -> str:
     for x in m.get("exists", []):
         L.append(f"- EXISTS: {x['what']} [{x.get('status') or ''}] ({x['journal']})"
                  + (f" how: {x['how'][:160]}" if x.get("how") else "")
-                 + st(x.get("status") or "", how=x.get("see") or x.get("how") or ""))
+                 + st(x.get("status") or "", how=x.get("see") or x.get("how") or "")
+                 + (f" !! {x['status_newer']}" if x.get("status_newer") else "")
+                 + (f" | NEWEST WORD {x['latest_word']}" if x.get("latest_word") else ""))
     for p in m.get("plans", []):
         L.append(f"- OPEN PLAN ({p['date']}, {p['journal']}:{p['line']}): {p['plan']}" + mark(p) + st(p["plan"]))
     for e in m.get("latest", []):
@@ -2570,6 +2664,50 @@ def _all_map_rows() -> list[dict]:
     return rows
 
 
+def _annotate_latest(cards: list) -> list:
+    """Newest word wins (owner 2026-11-03): each card shown gets the newest state-changing entry about the same thing
+    (identity only here: the hook has a time budget), and loses the fields used to find it."""
+    from server import latest_word
+    for x in cards:
+        try:
+            lw = latest_word(x, use_meaning=False) if x.get("path") else None
+        except Exception:
+            lw = None
+        if lw and lw["when"] > str(x.get("latest") or "")[:16]:
+            x["latest_word"] = f"{lw['when']} ({x.get('journal')}:{lw['line']}): {lw['entry']}"
+        for k in ("path", "since", "latest"):
+            x.pop(k, None)
+    return cards
+
+
+_PLAN_NOT_DONE = re.compile(r"\b(not deployed|not yet|not live|not installed|not wired|stalled)\b", re.I)
+_SHIP_HEAD_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})[^\n]*?\[(ship|deploy|fix|live)\][^\n]*", re.M)
+
+
+def _plan_superseded(plan: dict) -> bool:
+    """An open plan that says a thing is not done, while a later ship heading of the same journal names that thing as
+    deployed (2026-11-03 live test: "ADSCOPE 4.0 built and tested on the PC, NOT deployed" kept showing as an open
+    plan after "[ship] ADSCOPE 4.0 DEPLOYED on gpubox")."""
+    text = str(plan.get("plan") or "")
+    if not _PLAN_NOT_DONE.search(text):
+        return False
+    first = re.match(r"\W*([A-Za-z][\w-]{3,})", text)
+    jp = _journal_by_name(str(plan.get("journal") or ""))
+    if not first or not jp:
+        return False
+    nm, when = _fold(first.group(1)), str(plan.get("date") or "")
+    try:
+        body = Path(jp).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+    for m in _SHIP_HEAD_RX.finditer(body):
+        head = _fold(m.group(0))
+        if m.group(1) > when and re.search(r"(?<![a-z0-9])" + re.escape(nm) + r"(?![a-z0-9])", head) \
+                and re.search(r"\b(deployed|live|installed|running)\b", head):
+            return True
+    return False
+
+
 def _journal_by_name(name: str) -> str:
     c = _conn()
     try:
@@ -2616,6 +2754,39 @@ def _my_work_text(words: set, company: str = "") -> str:
 
 
 REPEAT_AFTER = 3  # prompts: a word's map comes back when it reappears this many user messages later
+# Owner 2026-11-03: "the map works by meaning and context, not word noise". Measured on 7 real owner messages of
+# that day (bge-m3): on-topic entries scored 0.58-0.67 (Launch Desk, the pro manuals, Ad Scope research), the noise
+# 0.45-0.57 (an Boltlab health check for a question about a new AI model; Post Pilot and Chipmill entries for an
+# angry "why can't you make me money"). 0.55 still let the vague messages through. Below the floor a "same meaning"
+# line is not shown, and a word's map is shown only when one of its journals is among the same-meaning journals.
+PROMPT_MEANING_FLOOR = float(os.environ.get("JOURNAL_PROMPT_MEANING_FLOOR") or 0.58)
+# "no que muestre Oddsboard si no estamos hablando de Oddsboard": a name right after a negation is what the
+# owner does NOT want; its map is not shown.
+_NEGATED = re.compile(r"\b(no|not|sin|ni|nunca|never|without)\b(?:\W+\w+){0,3}?\W+$", re.I)
+
+
+def _drop_negated_names(q: str) -> str:
+    """Takes out of a message the names it negates, before the meaning search."""
+    return re.sub(r"(\b(?:no|not|sin|ni|nunca|never|without)\b(?:\W+[a-záéíóúñ]+){0,3}\W+)[A-Z][\w.-]+", r"\1", q)
+# What a command returned: the owner's verdict must mean something close to what the command was for (its
+# description). Measured: noise 0.35-0.39 ("Read the meaning block function" vs an Tone Garden copy verdict),
+# on-topic 0.46-0.54.
+OUTPUT_CONTEXT_FLOOR = float(os.environ.get("JOURNAL_OUTPUT_CONTEXT_FLOOR") or 0.42)
+
+
+def _prompt_meaning(q: str, k: int = 8):
+    """(hits above the floor, journals of those hits) for an owner message; journals is None when the meaning
+    service did not answer, so callers fall back to the word rules instead of going silent."""
+    try:
+        import meaning
+        raw = meaning.query(q, k=k, min_score=0.0)
+    except Exception:
+        return [], None
+    if not raw:
+        return [], None
+    hits = sorted((h for h in raw if float(h.get("score", 0)) >= PROMPT_MEANING_FLOOR),
+                  key=lambda h: -float(h.get("score", 0)))
+    return hits, {h["journal"] for h in hits}
 
 
 def rows_cache_path() -> Path:
@@ -2694,8 +2865,255 @@ def _meaning_block(q: str, title: str, skip: set = frozenset(), k: int = 5) -> s
         import meaning
     except Exception:
         return ""
-    hits = [h for h in meaning.query(q, k=k + 3) if f"{h['journal']}:{h['line']}" not in skip]
+    # meaning-only hits below the owner-message floor are noise (2026-11-03: four "Incidents" headers for an IP)
+    hits = [h for h in meaning.query(q, k=k + 3) if f"{h['journal']}:{h['line']}" not in skip
+            and ("words" in str(h.get("by", "")) or float(h.get("score", 0)) >= PROMPT_MEANING_FLOOR)]
     return (title + "\n" + "\n".join(meaning.text_lines(hits, k))) if hits else ""
+
+
+IN_PLAY_S = 3 * 3600  # a journal read this recently is a project the session is working on
+
+
+def _projects_in_play(seen: dict, names: set = frozenset(), cap: int = 2) -> list[str]:
+    """Journal paths of the projects this session is on: journals it read lately (newest first), then the ones the
+    owner's message is about."""
+    from quick_hook import jkey
+    now = time.time()
+    # The journals this session read directly, most read first (a search hit is not a project); the last-read order
+    # only when no direct read is recorded.
+    jc = {k: v for k, v in (seen.get("jc") or {}).items() if now - float(v[1]) < IN_PLAY_S}
+    keys = [k for k, _ in sorted(jc.items(), key=lambda kv: (-int(kv[1][0]), -float(kv[1][1])))] or \
+        [k for k, t in sorted((seen.get("jt") or {}).items(), key=lambda kv: -float(kv[1])) if now - float(t) < IN_PLAY_S]
+    c = _conn()
+    try:
+        rows = c.execute("SELECT path, name FROM journals ORDER BY mtime DESC").fetchall()
+    finally:
+        c.close()
+    by_key = {}
+    for p, nm in rows:
+        by_key.setdefault(jkey(nm), p)
+    out = [by_key[k] for k in keys if k in by_key]
+    if not out:  # the message's own journals only when the session is not on a project yet
+        out = [by_key[jkey(nm)] for nm in sorted(names) if jkey(nm) in by_key]
+    return [p for p in dict.fromkeys(out) if Path(p).is_file() and "_JOURNAL" in Path(p).name.upper()][:cap]
+
+
+# An old rule shown as if it were current (owner 2026-11-03: "it publishes through the API, why do you invent, why
+# doesn't the mod work"): a 2026-09-08 "[regla] Social Engine is used by CLI, not as MCP" came up for a message about
+# Social Engine in the connector, while October entries say it is an MCP that publishes through the Instagram API.
+# A rule or decision older than a week gets a search for newer entries that mean the same, and the judge says whether
+# one of them changes it; that one is shown right under it as NEWER WORD.
+_RULE_HEAD = re.compile(r"^(\d{4}-\d{2}-\d{2})[^\[]*\[(regla|rule|decision|decisi\w*|decided|correction|policy|"
+                        r"owner[- ]?(rule|order|decision))[^\]]*\]", re.I)
+_NEWER_TASK = ("The Message is an OLD rule or decision from a journal. The Entries were written after it. Which entries "
+               "change, replace, contradict or make it outdated (the thing it talks about now works, is used or is "
+               "decided another way)? An entry that only talks about the same thing without changing the rule is NOT "
+               "a change.")
+NEWER_WORD_AGE_DAYS = 7
+_META_HEAD = re.compile(r"\[(mod-miss|check|research|handoff)\]", re.I)
+
+
+def _newer_word(hit: dict) -> str:
+    """'  NEWER WORD (...)' for an old rule or decision that a newer entry changes; '' otherwise. Never raises."""
+    try:
+        m = _RULE_HEAD.match(str(hit.get("heading") or ""))
+        if not m:
+            return ""
+        old = m.group(1)
+        if time.time() - time.mktime(time.strptime(old, "%Y-%m-%d")) < NEWER_WORD_AGE_DAYS * 86400:
+            return ""
+        import meaning
+        topic = re.sub(r"^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?\s*\[[^\]]*\]\s*", "", str(hit["heading"]))
+        # notes about the memory system itself (a mod miss, a live check) talk about the rule, they are not its news
+        cands = [c for c in meaning.query(topic, k=16, timeout=2.5)
+                 if str(c.get("heading") or "")[:10] > old
+                 and not _META_HEAD.search(str(c.get("heading") or "")[:40])
+                 and (c.get("journal"), c.get("line")) != (hit.get("journal"), hit.get("line"))][:8]
+        if not cands:
+            return ""
+        import judge
+        keep = judge.judge(str(hit["heading"]), [f"{c['heading']}" for c in cands], task=_NEWER_TASK, ordered=True)
+        if not keep:
+            return ""
+        best = max((cands[i] for i in keep[:3]), key=lambda c: str(c.get("heading") or "")[:16])
+        return (f"  NEWER WORD ({str(best['heading'])[:16]}, {best['journal']}:{best['line']}): "
+                f"{str(best['heading'])[17:160].strip()}. The line above is older: trust the newer one.")
+    except Exception:
+        return ""
+
+
+# What one of your tools does TODAY, whenever a message names it: a session that describes a tool from memory gets
+# it wrong (it says the tool posts through a browser while it really uses the official API). Your tools are listed in
+# tools.json in your journal home (JOURNAL_HOME, default ~/.journal), or in the file JOURNAL_TOOLS_FILE points at:
+#   {"Mail Robot": {"names": ["mail robot", "mailbot"], "sheet": "Sends the newsletter through the email API."}}
+# names: one or two words each, matched with small typos (default: the tool's own name); sheet: what it does today
+# and how it works at its core. Without the file nothing is named: no tools block, no tools check on replies.
+def _load_tools() -> tuple:
+    f = os.environ.get("JOURNAL_TOOLS_FILE", "").strip()
+    p = Path(f).expanduser() if f else Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "tools.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, {}
+    names, facts = {}, {}
+    for label, v in (data.items() if isinstance(data, dict) else ()):
+        v = v if isinstance(v, dict) else {"sheet": v}
+        keys = v.get("names") or [label]
+        keys = [keys] if isinstance(keys, str) else keys
+        keys = [k for k in (" ".join(re.findall(r"[a-z0-9]+", _fold(str(x)))) for x in keys) if k]
+        if not keys:
+            continue
+        names[str(label)] = "|".join(keys)
+        if str(v.get("sheet") or "").strip():
+            facts[str(label)] = str(v["sheet"])
+    return names, facts
+
+
+OUR_TOOLS, TOOL_FACTS = _load_tools()
+
+
+def _named_tools(msg: str) -> list:
+    import difflib
+    words = re.findall(r"[a-z0-9]+", _fold(msg))
+    grams = set(words) | {a + " " + b for a, b in zip(words, words[1:])} | {a + b for a, b in zip(words, words[1:])}
+    found = []
+    for label, key in OUR_TOOLS.items():
+        for k in key.split("|"):
+            if k in grams or any(len(g) >= 6 and difflib.SequenceMatcher(None, g, k).ratio() >= 0.84 for g in grams):
+                found.append(label)
+                break
+    return found
+
+
+# Each tool's sheet says what it is and how it works at its core; a card says one thing it does.
+TOOL_CARD_FLOOR = 0.58
+
+
+def _tool_sheet(label: str) -> str:
+    return re.sub(r"\s+", " ", str(TOOL_FACTS.get(label) or "")).replace("**", "").strip()[:420]
+
+
+def _tool_cards_block(msg: str, limit: int = 3) -> str:
+    """'WHAT OUR TOOLS DO TODAY' for the tools a message names: the tool's product sheet always, plus the one card
+    the message is clearly about (meaning >= TOOL_CARD_FLOOR) with its newest word. '' when none. Never raises."""
+    try:
+        import meaning
+        from server import latest_word
+        lines, seen_what = [], set()
+        for label in _named_tools(msg)[:limit]:
+            sheet = _tool_sheet(label)
+            cards = [c for c in _match_capabilities(label, limit=40)
+                     if _fold(label) in _fold(f"{c.get('what', '')} {c.get('how', '')}") and c.get("what") not in seen_what][:15]
+            card = None
+            if cards:
+                sc = meaning.score(msg[:600], [str(c.get("what", ""))[:400] for c in cards])
+                if sc and len(sc) == len(cards):
+                    i = max(range(len(cards)), key=lambda k: sc[k])
+                    if sc[i] >= TOOL_CARD_FLOOR:
+                        card = cards[i]
+            if not sheet and not card:
+                continue
+            line = f"- {label}: {sheet}" if sheet else f"- {label}:"
+            if card:
+                seen_what.add(card.get("what"))
+                line += f" | ON THIS QUESTION: {str(card.get('what', ''))[:200]}"
+                if card.get("status"):
+                    line += f" [{str(card['status'])[:80]}]"
+                try:
+                    lw = latest_word(card, use_meaning=False)
+                except Exception:
+                    lw = None
+                if lw:
+                    line += f" | NEWEST WORD {lw['when']} ({card.get('journal', '')}:{lw['line']}): {lw['entry'][:120]}"
+            lines.append(line)
+        if not lines:
+            return ""
+        return ("WHAT OUR TOOLS DO TODAY (the message names them; say how one works only from this or its "
+                "journal, never from memory):\n" + "\n".join(lines))
+    except Exception:
+        return ""
+
+
+def _owner_brief_block(seen: dict, n: int, msg: str, names: set, shown: str = "") -> str:
+    """The owner brief of each project in play: whole the first time in a session and every BRIEF_EVERY messages;
+    in between, only the lines the judge says apply to this message."""
+    import owner_brief
+    import judge
+    out = []
+    for p in _projects_in_play(seen, names):
+        lines = owner_brief.lines_for(p)
+        # A line the map of this message already shows (a Decided card) is not repeated.
+        low = shown.lower()
+        lines = [ln for ln in lines
+                 if not (ln.split("] ", 1)[-1][:60].lower() in low and len(ln.split("] ", 1)[-1]) >= 20)]
+        if not lines:
+            continue
+        k = "ob:" + owner_brief._key(p)
+        last = seen.get(k)
+        if last is None or n - int(last) >= owner_brief.BRIEF_EVERY:
+            seen[k] = n
+            out.append(owner_brief.brief_text(p, lines))
+            continue
+        pick = judge.judge(msg, lines, task=owner_brief.PROMPT_TASK) if len(msg.strip()) >= 3 else None
+        if pick:
+            out.append(owner_brief.brief_text(p, [lines[i] for i in pick], partial=True))
+    return "\n\n".join(out)
+
+
+def stop_check(call: dict) -> None:
+    """The finished reply against the owner brief of the projects in play, before the turn ends (owner 2026-11-03:
+    the reply check rode into the NEXT turn, after the owner had already read the repeated proposal)."""
+    # Opt-in (JOURNAL_REPLY_GATE=on): one stronger-model call per finished reply.
+    if call.get("stop_hook_active") or os.environ.get("JOURNAL_REPLY_GATE", "").lower() not in ("on", "1", "true", "yes"):
+        return
+    reply = str(call.get("reply") or "")
+    if len(reply) < 200:
+        return
+    import owner_brief
+    _, seen = _quick_seen(call.get("session_id", ""))
+    why = owner_brief.stop_check(reply, _projects_in_play(seen)) or tool_claims_check(reply)
+    if why:
+        print(json.dumps({"hookSpecificOutput": {"block": why}}, ensure_ascii=False))
+
+
+_CLAIMS_TASK = """The Reply below talks about some of our tools. Each Sheet says how that tool works today.
+List only the statements in the Reply that CONTRADICT a Sheet (the Reply says the tool works one way, the Sheet says
+another). A statement the Sheet does not cover is fine. Quote the Reply's exact words.
+
+Reply:
+{reply}
+
+Sheets:
+{sheets}
+
+Answer only JSON: {{"wrong": [{{"tool": "<name>", "quote": "<exact words from the Reply>", "sheet_says": "<short>"}}]}}"""
+
+
+def tool_claims_check(reply: str) -> str:
+    """'' when the reply says nothing about our tools that their sheets contradict; else the text that sends it back.
+    Owner 2026-11-03: "it publishes through the API, why do you invent" (the reply said Social Engine posts through
+    the browser; its sheet says the official APIs)."""
+    try:
+        import judge
+        sheets = [(lbl, _tool_sheet(lbl)) for lbl in _named_tools(reply)]
+        sheets = [(lbl, s) for lbl, s in sheets if s]
+        if not sheets or not judge.available():
+            return ""
+        out = judge._run(_CLAIMS_TASK.format(reply=reply[:8000], sheets="\n".join(f"- {l}: {s}" for l, s in sheets)),
+                         model=judge.STRONG)
+        m = re.search(r"\{.*\}", out, re.S)
+        wrong = (json.loads(m.group(0)).get("wrong") or []) if m else []
+    except Exception:
+        return ""
+    body = re.sub(r"\s+", " ", reply.lower())
+    bad = [w for w in wrong if len(str(w.get("quote") or "")) >= 12
+           and re.sub(r"\s+", " ", str(w["quote"]).lower()) in body]
+    if not bad:
+        return ""
+    return ("TOOL CHECK, BEFORE THE OWNER READS YOUR REPLY: it says something about our tools that their own sheet "
+            "contradicts:\n" + "\n".join(f'- {w.get("tool")}: your words "{w.get("quote")}"; the sheet says '
+                                          f'{w.get("sheet_says")}' for w in bad)
+            + "\nRewrite those sentences from the sheet (or read the tool's journal first). Do not mention this check.")
 
 
 def quick_hook(call: dict, prompt: bool = False):
@@ -2721,6 +3139,11 @@ def quick_hook(call: dict, prompt: bool = False):
         raw = str(call.get("prompt") or "")[:4000]
         raw = re.sub(r"[A-Za-z]:[\\/][^\n\"'`|<>]*?\.\w{1,5}\b", " ", raw)
         text = _to_english(re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw))
+        q_msg = re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw).strip()
+        # A name the owner says he does NOT want ("no que muestre Oddsboard") is taken out before the meaning search,
+        # or the search goes straight to it (2026-11-03 replay: four Oddsboard entries at 0.61-0.65).
+        q_mean = _drop_negated_names(q_msg)
+        m_hits, m_js = _prompt_meaning(q_mean) if len(re.findall(r"\w+", q_mean)) >= 3 else ([], None)
         words = {_fold(w).strip("._-") for w in re.findall(r"[A-Za-zÀ-ÿ0-9_.-]{3,}", text)}   # "capaz." is "capaz"
         keys, vocab = _map_keys(), _prompt_vocab()
         _write_rows_cache()
@@ -2751,8 +3174,13 @@ def quick_hook(call: dict, prompt: bool = False):
         # ("| Mensaje |") or before a colon is formatting, not a name; nor is a word the message also writes in
         # lowercase (2026-10-26: Spanish report words mapped as names).
         lower_words = {_fold(w) for w in re.findall(r"\b[a-zà-ÿ][a-zà-ÿ0-9]*\b", text)}
+        # Shouting is not a name: "YA TE DIJE QUE ESTAMOS DANDO VUELTAS" mapped "dije", "dando", "vueltas" as products
+        # (2026-11-03). In a message with 3+ all-capital words, an all-capital word is emphasis.
+        shout = len(re.findall(r"\b[A-ZÀ-Þ]{2,}\b", raw)) >= 3
         for mt in re.finditer(r"[A-Za-zÀ-ÿ0-9]+", text):
             tok, before, after = mt.group(0), text[:mt.start()].rstrip(), text[mt.end():mt.end() + 3]
+            if shout and tok.isupper():
+                continue
             if any(ch.isupper() for ch in tok[1:]):
                 proper.add(_fold(tok))
             elif tok[0].isupper() and before and before[-1] not in ".!?:\n*_|#->([\"'" \
@@ -2767,15 +3195,26 @@ def quick_hook(call: dict, prompt: bool = False):
         # Named things (a company, a journal, a product in a card, a Brain map key) map even when typed in
         # lowercase inside a fast message (2026-10-26: "mapleworks en vivo" mapped nothing). A phrase ("venture
         # desk") is mapped as one, not word by word.
-        ents = [e["name"] for e in _entities_in(text) if e["name"] not in role_words]
+        ent_list = _entities_in(text)
+        ents = [e["name"] for e in ent_list if e["name"] not in role_words]
+        named_journals = {e["name"] for e in ent_list if e.get("kind") == "journal"}
         ent_words = {w for e in ents if " " in e for w in e.split()}
         cands = [w for w in cands if w not in ent_words] + [e for e in ents if e not in cands and due(f"p:{e}")]
         for e in ents:
             shares.setdefault(e, 0.0)
         shown: set = set()
+        try:
+            import judge
+            judge_on = judge.available()
+        except Exception:
+            judge_on = False
         for w in sorted(cands, key=lambda x: (x not in keys and x not in ents, x not in proper, shares[x])):
             if len(maps) >= (6 if w in proper else 3):
                 break
+            fr = _fold(raw)
+            occ = [mo.start() for mo in re.finditer(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", fr)]
+            if occ and all(_NEGATED.search(fr[max(0, i - 60):i]) for i in occ):
+                continue
             m = quick_map(w, limit=3, context=text)
             named_cards = [x for x in m.get("decided", []) + m.get("exists", []) if w in _fold(x.get("what") or "")]
             strong = m.get("pieces") or any(w in _name_words(j["journal"]) for j in m.get("journals", [])) \
@@ -2796,11 +3235,20 @@ def quick_hook(call: dict, prompt: bool = False):
                 shown |= {("d", x["what"]) for x in m["decided"] + m["exists"]}
                 shown |= {("p", x["journal"], x["line"]) for x in m["plans"]} | {("a", x["journal"], x["line"]) for x in m["about"]}
             t = quick_map_text(m) if strong else ""
+            # With the judge on, it decides below (2026-11-03: "ok oddsboard bot chekea q andamos" scored 0.51 < 0.58
+            # and lost its map; the floor rule stays only as the fallback without a judge).
+            if t and m_js is not None and not judge_on and w not in named_journals \
+                    and not (set(re.findall(r"[\w.-]+\.md", t)) & m_js):
+                # The word is in the message but the message is not about that journal's topic (2026-11-03: the owner
+                # wrote "Oddsboard" and an AI vendor's name in passing and got both full maps).
+                t = ""
             again = f"p:{w}" in seen
             seen[f"p:{w}"] = n
             if t:
                 maps.append(_compact(t) if again or len(maps) >= 3 else t)
-        if len(maps) < 3:
+        # Pairs of common words ("manual respuesta", "cripto regla", "journal mapa") mapped noise on every owner message
+        # of 2026-11-02; the meaning layer covers what they were for. Kept only when the meaning service is down.
+        if len(maps) < 3 and m_js is None:
             # Common words ("pack", "funnel") never map alone, but two of them close together in the message
             # often point at one journal. Pairs within 3 words, at least one of them common, at most 12 checked.
             seq = [_fold(w) for w in re.findall(r"[A-Za-zÀ-ÿ0-9_-]+", text)]
@@ -2834,13 +3282,58 @@ def quick_hook(call: dict, prompt: bool = False):
             if mine:
                 maps.insert(0, mine)
         # Meaning first (2026-10-30): the whole message, as written, against every journal entry.
-        q_msg = re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw).strip()
-        if len(re.findall(r"\w+", q_msg)) >= 3:
-            mb = _meaning_block(q_msg, "SAME MEANING AS THIS MESSAGE (journal entries that say the same thing, in any "
-                                "words or language; open the ones that fit before answering):",
-                                set(re.findall(r"[\w.-]+\.md:\d+", "\n".join(maps))))
-            if mb:
-                maps.insert(0, mb)
+        # The judge on the word maps too (owner 2026-11-03: "why word rules, didn't we move it to meaning?"): a map
+        # stays only when the judge says it is about what the message talks about.
+        wm = [i for i, t in enumerate(maps) if t.startswith("JOURNAL QUICK MAP for")]
+        if wm:
+            try:
+                import judge
+                keep = judge.judge(q_msg, ["\n".join(maps[i].splitlines()[:4]) for i in wm])
+            except Exception:
+                keep = None
+            if keep is not None:
+                drop = {wm[i] for i in range(len(wm)) if i not in keep}
+                maps = [t for i, t in enumerate(maps) if i not in drop]
+        skip = set(re.findall(r"[\w.-]+\.md:\d+", "\n".join(maps)))
+        # The journals named after a mapped word ("shopsite" -> SHOPSITE_JOURNAL.md), not every journal a map mentions
+        # (the shopsite map named PORTFOLIO_CO_JOURNAL and its Launch Desk brief came along, 2026-11-03).
+        mapped = {_fold(w) for w in re.findall(r'QUICK MAP for "([^"]+)"', "\n".join(maps))}
+        word_js = {j for j in re.findall(r"[\w.-]+_JOURNAL[\w.-]*\.md", "\n".join(maps))
+                   if any(w.replace(" ", "") in _fold(j).replace("_", "") for w in mapped)}
+        # A Brain map piece names its journal ("oddsboard" -> "Read first: .../FORECAST_MARKETS_JOURNAL.md").
+        for rf in re.findall(r"Read first: ([^\n]+)", "\n".join(maps)):
+            word_js |= set(re.findall(r"[\w.-]+_JOURNAL[\w.-]*\.md", rf)[:1])
+        mh = [h for h in m_hits if f"{h['journal']}:{h['line']}" not in skip][:4]
+        if mh:
+            # Similarity puts noise and topic in the same band (an angry "ya te dije" matched a Dreamfield loop entry
+            # at 0.62, 2026-11-03): the judge keeps only the entries really about the message.
+            try:
+                import judge
+                keep = judge.judge(q_msg, [f"{h['journal']}: {h.get('heading') or h.get('text') or ''}" for h in mh])
+            except Exception:
+                keep = None
+            if keep is not None:
+                mh = [mh[i] for i in keep]
+        if mh:
+            import meaning
+            lines = []
+            for h, ln in zip(mh, meaning.text_lines(mh, 4)):
+                lines.append(ln)
+                newer = _newer_word(h)
+                if newer:
+                    lines.append(newer)
+            maps.insert(0, "SAME MEANING AS THIS MESSAGE (journal entries that say the same thing, in any words or "
+                           "language; open the ones that fit before answering):\n" + "\n".join(lines))
+        tc = _tool_cards_block(q_msg)
+        if tc:
+            maps.insert(0, tc)
+        # The owner brief goes first, whatever the words of the message (2026-11-03: "ya te dije ayer" got nothing).
+        try:
+            ob = _owner_brief_block(seen, n, q_msg, word_js | {h["journal"] for h in mh[:1]}, "\n".join(maps))
+        except Exception:
+            ob = ""
+        if ob:
+            maps.insert(0, ob)
         if maps:
             out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext":
                    "\n\n".join(maps) + "\n(Quick map from the journals. Open what it points to before acting; "

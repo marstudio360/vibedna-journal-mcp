@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.4.0 (2026-11-03)
+
+Journals DNA: your AI keeps your decisions in mind when it answers, not only when it edits, and it stops quoting old
+rules as if they were current.
+
+**A calm status line**
+- Under your prompt the mod shows `Journals DNA · active`, reset at every message, and one plain sentence only when
+  something real happens: reading your notes first, using a tool you already have, found what you already decided,
+  saved to your journal, fixing a reply that went against your notes. The AI still gets the full reasons.
+
+**Newer word on old rules**
+- When the map shows a rule, decision or correction older than a week, a search by meaning looks for newer entries
+  and the judge says which one changes it; that one is shown right under it as `NEWER WORD`.
+- Cards in the map and in `journal_search` carry the newest state-changing entry about the same thing, and a card
+  that says "not deployed" while a later ship entry says deployed is flagged.
+
+**The reply check against your own decisions (opt in)**
+- Each project gets an owner brief (`owner_brief.py`): your rules, what was already tried and lost, and the open
+  thread you approved. It is shown first in the map of your message.
+- With `JOURNAL_REPLY_GATE=on` and the judge on, the finished reply is checked before the turn ends; a reply that
+  proposes again what you rejected, or contradicts the sheet of one of your tools, is sent back for a rewrite. A
+  break counts only with the reply's own words quoted.
+
+**Judged manual hints**
+- `journal_append` points a lesson at a section of one of your refined manuals only when the judge agrees a reader
+  of that manual needs it (similarity alone pointed unrelated fixes at manuals).
+
+**Also**
+- Your own tools in `tools.json` (or `JOURNAL_TOOLS_FILE`): a message that names one carries what it does today.
+  Empty by default.
+- The judge (`judge.py`) is your `claude` command, off by default (`JOURNAL_JUDGE=on`); without it the checks fall
+  back to the word and meaning rules of 1.3.0. No model name is built in: it uses the command's default unless you set one.
+- Exact identifiers (an IP, host:port, @account, a hex id, a version) are searched as written first.
+- A journal read in the last 30 minutes opens its gate, whatever message it was read in; a guard named after a piece
+  (`shop-gate`) is not the piece; shouting in capitals is not read as names; a name you say you do not want is left
+  out of the meaning search.
+- Reading a journal file by hand gets a short note naming the journal tool call that does it in one step.
+
 ## 1.3.0 (2026-11-01)
 
 Journals DNA: your AI finds what your journals mean, not only the words you used, and it never repeats an old

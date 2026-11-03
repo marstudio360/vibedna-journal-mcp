@@ -37,6 +37,7 @@ import math
 import os
 import posixpath
 import re
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -479,6 +480,46 @@ def _how(g: dict, now: dict) -> str:
     return ", ".join(fns[:4])
 
 
+TOOL_TASK = ("You decide which existing tools already do the job an AI session is about to do (it may be about to write "
+             "its own script for it). List every tool that does THIS job, the most specific first: a tool or card made "
+             "for exactly this job and target (e.g. reading the DMs sent to a named account) comes before any generic "
+             "tool; a generic tool (a plain browser driver, a shell, a CLI for any website) counts ONLY when no "
+             "specific one does the job. Sharing a word, a platform or a topic is not enough. When the action says too "
+             "little to tell what job it does, none fit. An action that configures, edits, tests or fixes a tool itself "
+             "(its settings, its code, its env) is not a job that tool does: none fit then. A card fits only when it "
+             "does the same job, not when it shares a word like owner, brief or account. None may fit.")
+
+
+_NEAR = {"dms": {"dm", "inbox", "thread"}, "dm": {"inbox", "thread"}, "messages": {"inbox", "dm", "thread"},
+         "message": {"inbox", "dm", "thread"}, "mensajes": {"inbox", "dm", "thread"}, "inbox": {"dm", "thread"}}
+
+
+def _desc(g: dict, q: set = frozenset()) -> str:
+    ents = [e for _, e in g["entries"]]
+    doc = next((e for e in ents if e["kind"] == "doc"), None)
+    mcp_e = next((e for e in ents if e["kind"] == "mcp"), None)
+    one = next((e.get("one") for e in (doc, mcp_e, ents[0]) if e and e.get("one")), "")
+    hows = "; ".join(sorted({str(e.get("how") or "") for e in ents if e.get("how")}))[:200]
+    want = set(q) | {w for x in q for w in _NEAR.get(x, ())}
+    # The functions that share a word with the action first: a long tool cut at 900 characters hid unified_inbox.
+    fns = sorted({f for e in ents for v in (e.get("fn") or {}).values() for f in v},
+                 key=lambda f: (not (_words(f) & want), f))
+    return (f"{_clean(g['name'], 90)}: {_clean(one, 200)}" + (f" | how: {hows}" if hows else "")
+            + (f" | functions: {', '.join(fns[:40])}" if fns else ""))
+
+
+def _judge_tools(intent: str, text: str, cand: list[dict]) -> list[dict] | None:
+    """The candidates the judge says do this job, in rank order; None when there is no judge."""
+    try:
+        sys.path.insert(0, str(HERE))
+        import judge
+        q = _words(f"{intent} {text[:1200]}")
+        pick = judge.judge(f"{intent}\n{text[:1200]}", [_desc(g, q) for g in cand], task=TOOL_TASK, tmax=900, model=judge.STRONG, ordered=True)
+    except Exception:
+        return None
+    return None if pick is None else [cand[i] for i in pick]
+
+
 def block(groups: list[dict], now: dict, intent: str = "") -> str:
     lines = []
     allents = tool_index()["entries"]
@@ -785,7 +826,7 @@ def reads_only(desc: str) -> bool:
     return not re.search(r"\b(?:and|then|y|luego)\b", desc, re.I)
 
 
-def check(call: dict, seen: dict) -> dict | None:
+def _check_concepts(call: dict, seen: dict) -> dict | None:
     """{"deny": text} once per intent when the action builds its own way and a tool already does it,
     {"note": text} when a tool fits but nothing is being built, None otherwise. Updates seen (session state)."""
     intent, text, code, files, builds = action_parts(call)
@@ -853,10 +894,23 @@ def check(call: dict, seen: dict) -> dict | None:
     if not now:
         return None
     named = text + " " + code[:4000]
-    groups = [g for g in rank(now, ctx, named) if _qualifies(g, now)][:3]
-    if not groups:
+    cand = [g for g in rank(now, ctx, named) if _qualifies(g, now)][:12]
+    # Cards whose rare words the action shares (an account, a script name) join the judge's list even when the concept
+    # rank misses them (2026-11-03: the "read the DMs sent to @demoacct_" card was not among the concept candidates).
+    have = {g["key"] for g in cand}
+    cand += [g for g in _lexical_cands(f"{intent}\n{text}\n{code[:3000]}")
+             if g["score"] >= LEX_MIN and g["key"] not in have and g["key"].startswith("card:")][:4]
+    if not cand:
         return None
-    groups = [g for g in groups if g["score"] >= 0.6 * groups[0]["score"]]   # far behind the best = another job
+    # The judge picks among the candidates (2026-11-03: a session reading DMs of an account was shown Bidbot and
+    # Gumroad, never Social Engine's message reader; the concept score cannot tell "read messages" from "publish").
+    picked = _judge_tools(intent, text, cand)
+    if picked is not None:
+        if not picked:
+            return None
+        groups = picked[:3]
+    else:
+        groups = [g for g in cand[:3] if g["score"] >= 0.6 * cand[0]["score"]]   # far behind the best = another job
     # Once per TARGET (the file written, the scripts, files and hosts a command acts on), not per description or
     # per best tool: rewording the same command, or the ranking shifting with the session's history, used to stop
     # the same action again (2026-10-27).
@@ -885,6 +939,65 @@ def check(call: dict, seen: dict) -> dict | None:
     seen[key] = 1
     txt = block(groups, now, intent)
     return {"deny": txt} if builds and strong else {"note": txt}
+
+
+_WORD = re.compile(r"[a-z][a-z0-9]{2,}")
+LEX_MIN = 10.0  # text-match score of a real fit (measured 2026-11-03: real fits 11.7-17.4, noise 5.4-7.1)
+
+
+def _words(text: str) -> set:
+    return set(_WORD.findall(_fold(re.sub(r"[_\-./]", " ", text))))
+
+
+def _lexical_cands(query: str, cap: int = 12) -> list[dict]:
+    """Tool groups whose name, one-liner and function names share rare words with the action (the second road when
+    the concept table has no word for the job: "read the DMs of @demoacct_" had no concept, 2026-11-03)."""
+    import math as _m
+    idx = tool_index()
+    docs: dict = {}
+    for e in idx["entries"]:
+        fns = " ".join(f for v in (e.get("fn") or {}).values() for f in v)
+        d = docs.setdefault(e["key"], {"words": set(), "entries": []})
+        d["words"] |= _words(f"{e['name']} {e.get('one') or ''} {fns}")
+        d["entries"].append((0.0, e))
+    n = len(docs) or 1
+    df: dict = {}
+    for d in docs.values():
+        for w in d["words"]:
+            df[w] = df.get(w, 0) + 1
+    q = _words(query)
+    out = []
+    for k, d in docs.items():
+        sc = sum(_m.log(n / df[w]) for w in q & d["words"] if df[w] < n * 0.3)
+        if sc > 0:
+            out.append({"key": k, "entries": d["entries"], "shared": set(), "score": sc,
+                        "name": idx["names"].get(k) or d["entries"][0][1]["name"]})
+    out.sort(key=lambda g: -g["score"])
+    return out[:cap]
+
+
+def check(call: dict, seen: dict) -> dict | None:
+    """The concept road first; when it finds nothing for an action that builds or runs its own way, the text road
+    with the judge (once per target)."""
+    r = _check_concepts(call, seen)
+    if r is not None:
+        return r
+    intent, text, code, files, builds = action_parts(call)
+    if not intent or not builds or _in_tool_source(text + "\n" + code[:3000], str(call.get("cwd") or "")):
+        return None
+    key = "tl:" + hashlib.md5((target_of(call) or _fold(intent)).encode("utf-8")).hexdigest()[:16]
+    if key in seen:
+        return None
+    # No "the action names this tool" filter here: a script that names the account (@demoacct_) is not calling the card
+    # whose title names that account; that filter hid the right card (2026-11-03).
+    named = text + " " + code[:4000]
+    cand = [g for g in _lexical_cands(f"{intent}\n{text}\n{code[:3000]}\n{files[:1000]}")
+            if g["score"] >= LEX_MIN and (g["key"].startswith("card:") or not names_tool(tool_index(), g["key"], named))]
+    picked = _judge_tools(intent, f"{text}\n{code[:1500]}", cand) if cand else None
+    if not picked:
+        return None
+    seen[key] = 1
+    return {"deny": block(picked[:3], {}, intent)}
 
 
 if __name__ == "__main__":   # python toolmap.py "<what you are about to do>": the tools that already do it

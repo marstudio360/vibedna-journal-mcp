@@ -1,8 +1,24 @@
-# Install Journals DNA 1.3.0
+# Install Journals DNA 1.4.0
 
 **Journals DNA: your AI cannot skip your journal.** This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
 command before it runs it and ask before step 4.
+
+## New in 1.4.0
+- **A calm status line.** Under your prompt the mod shows `Journals DNA · active`, and one plain sentence only when
+  something real happens ("reading your notes on this first", "saved to your journal", ...). The AI still gets the
+  full reasons; you no longer see internal wording.
+- **Newer word on old rules.** When the map shows a rule or decision older than a week, a newer entry that changes
+  it is shown right under it as `NEWER WORD`, so an outdated rule is never followed as current. Needs the judge and
+  the search by meaning (both optional, below).
+- **Your replies checked against your own decisions (opt in).** With `JOURNAL_REPLY_GATE=on` and the judge on, the
+  AI's finished reply is checked before the turn ends against your owner brief: your rules, what you already tried
+  and lost, and the thread you already approved. A reply that proposes again something you rejected, or that says
+  one of your tools works another way than its sheet, is sent back for a rewrite, with the exact words quoted.
+- **Judged manual hints.** When a lesson written in a project journal may belong in one of your refined manuals,
+  the hint now names a section only when the judge agrees a reader of that manual needs it.
+- **Your tools, described by you.** List your tools once in `tools.json` (below). A message that names one carries
+  what it does today, so the AI never describes it from memory.
 
 ## What you need
 - Python 3.10 or newer (`python3 --version`; on Windows `py --version`).
@@ -108,6 +124,44 @@ the other language (for example "boletin" for "newsletter") can still need the w
 Teams with a GPU machine can run `embed_server.py` there on a private address (a bigger model, better matches) and
 set `JOURNAL_MEANING_URL` on every computer; the index remembers which model made its vectors.
 
+## Your own tools (optional)
+Create `tools.json` in your journal home (`~/.journal/tools.json`, or the folder `JOURNAL_HOME` points at), or put
+it anywhere and set `JOURNAL_TOOLS_FILE` to its path:
+```json
+{
+  "Mail Robot": {"names": ["mail robot", "mailbot"], "sheet": "Sends the newsletter through the email API, never through a browser."},
+  "Shop Scanner": "Reads competitor prices once a day from their public pages."
+}
+```
+- `names`: one or two words each, matched with small typos (default: the tool's own name).
+- `sheet`: what the tool does today and how it works at its core, in one or two sentences.
+
+A message that names a tool gets a `WHAT OUR TOOLS DO TODAY` block with its sheet (and, when the message is clearly
+about one of its `Already exists` cards, that card with its newest entry). With the reply check on, a reply that
+contradicts a sheet is sent back. Without the file nothing is listed and both stay quiet.
+
+## Switch on the judge (optional)
+Some checks are decided by a language model instead of word rules: which journal lines are really about your
+message, the owner brief of each project, the newer word on old rules, the manual hints, the "a tool already does
+this" pick and the reply check. The judge is the `claude` command of Claude Code, already logged in on your machine:
+each check is one short call on your own plan (a few seconds; answers are cached). It is **off by default**, and
+with it off (or without the `claude` command on the PATH) the checks that need it fall back to the word and meaning rules of 1.3.0.
+
+To switch it on, add the keys to the `env` block of `~/.claude/settings.json` (the mod and the server read them
+there), then open a new Claude Code session:
+```json
+{ "env": { "JOURNAL_JUDGE": "on", "JOURNAL_REPLY_GATE": "on" } }
+```
+`JOURNAL_REPLY_GATE=on` is the reply check before the turn ends; leave it out to keep the judge without it (the
+reply check needs the judge). By default the judge uses the `claude` command's own default model. Quick picks are
+faster with a small model: set `JOURNAL_JUDGE_MODEL` to a model name your `claude` command accepts (see
+`claude --help`, option `--model`), and `JOURNAL_JUDGE_STRONG_MODEL` to a stronger one for the picks that decide
+something (the tools pick and the reply check).
+
+Without a judge the owner brief is made from your `## Decided` cards and your latest `[correction]` and
+`[decision]` entries; with it, the judge writes it in the background (up to 16 lines: RULE, LOST, OPEN). To see
+one: `.venv/bin/python owner_brief.py --show <path of a journal>`.
+
 ## Optional settings (environment variables)
 | Setting | What it does |
 |---|---|
@@ -125,6 +179,13 @@ set `JOURNAL_MEANING_URL` on every computer; the index remembers which model mad
 | `JOURNAL_MEANING_URL` | A team embedding service (`embed_server.py` on a private address) instead of the local model |
 | `JOURNAL_MEANING_PORT` | Port of the local meaning service (default 47311) |
 | `JOURNAL_MEANING_MIN` | Lowest score shown as a meaning match (default 0.38 for the local model) |
+| `JOURNAL_TOOLS_FILE` | Your tools list, if not `tools.json` in the journal home |
+| `JOURNAL_JUDGE=on` | Switch the judge on (off by default) |
+| `JOURNAL_REPLY_GATE=on` | Check each finished reply against your owner brief and tool sheets (needs the judge) |
+| `JOURNAL_JUDGE_MODEL`, `JOURNAL_JUDGE_STRONG_MODEL` | Models for the judge's quick picks and its decisions (default: the `claude` command's own) |
+| `JOURNAL_JUDGE_CMD` | The command the judge runs (default `claude`) |
+| `JOURNAL_JUDGE_TIMEOUT` | Seconds before a judge call gives up (default 30; the check then works as without a judge) |
+| `JOURNAL_BRIEF_DAYS` | How many days of corrections and decisions the owner brief reads (default 21) |
 
 ## Rules your AI follows
 Write rules as dated lines in `RULES_JOURNAL.md` (or `OWNER_SAID_JOURNAL.md`, or any `*_RULES_JOURNAL.md`); see
@@ -141,7 +202,7 @@ Everything runs in temporary folders; your journals and `~/.journal` are not tou
 | What | How |
 |---|---|
 | Server, mod and settings keys | `.venv/bin/python install_mod.py --uninstall` (`--dry-run` first to see it) |
-| The index and session state | delete `~/.journal` |
+| The index, session state, owner briefs and your tools list | delete `~/.journal` |
 | The Obsidian map | delete `_obsidian/` and `.obsidian/` in that folder |
 | Everything else | delete `<folder>` |
 Your journals are never changed by installing or uninstalling.
