@@ -145,9 +145,9 @@ def install(dry: bool, yes: bool) -> int:
         say("\nSteps left for you (run them in a terminal where the claude command works):")
         for c in left:
             say("  " + c)
-    say("\nDone. Open a new Claude Code session and ask your AI: journal_quick(\"<a word from your project>\").")
-    say("Check the mod: ask it to edit a file your Brain map names; the first touch shows the map and stays")
-    say("stopped until that piece's journal is read.")
+    say("\nDone. Restart Claude Code (close it, open a new session) and ask your AI: journal_quick(\"<a word from your project>\").")
+    say("Check the mod: ask it to edit a file your Brain map names; the first touch carries that piece's journal")
+    say("brief (handoff, state, pending, decisions, rules) with the call.")
     say(f"Undo: \"{sys.executable}\" install_mod.py --uninstall")
     return 0
 
@@ -172,6 +172,9 @@ def uninstall(dry: bool) -> int:
     if dry:
         say("\nDry run: nothing written.")
         return 0
+    data = load_settings()   # read again: the claude commands above may have changed the file
+    env = dict(data.get("env") or {})
+    has = [k for k in KEYS if k in env]
     stale = [(sec, key) for sec, key in (("enabledPlugins", f"{PLUGIN}@{MARKETPLACE}"), ("extraKnownMarketplaces", MARKETPLACE))
              if key in (data.get(sec) or {})]   # entries the claude command can leave behind for this plugin only
     if has or stale:

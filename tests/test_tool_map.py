@@ -12,6 +12,8 @@ Run: python -m pytest tests  (temp JOURNAL_HOME, temp tool docs; never the real 
 from __future__ import annotations
 
 import json
+
+import pytest
 import os
 import sys
 import tempfile
@@ -163,6 +165,7 @@ def test_every_incident_call_alone_surfaces_social_engine():
         assert "SOCIAL_SYSTEM_JOURNAL_USER.md" in text, _desc(c)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the recorded incident carries Windows paths")
 def test_incident_in_order_stops_once_each_call_that_posts():
     sid = _sid()
     got = {}
@@ -357,6 +360,7 @@ def test_file_names_and_extensions_are_never_words_or_projects():
 
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the recorded incident carries Windows paths")
 def test_the_instagram_incident_still_stops_after_the_false_positive_fixes():
     sid = _sid()
     denied = [_desc(c) for c in _calls() if (quick_hook._tools_first(_call(c, sid)) or {}).get("deny")]

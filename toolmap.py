@@ -486,7 +486,12 @@ TOOL_TASK = ("You decide which existing tools already do the job an AI session i
              "tool; a generic tool (a plain browser driver, a shell, a CLI for any website) counts ONLY when no "
              "specific one does the job. Sharing a word, a platform or a topic is not enough. When the action says too "
              "little to tell what job it does, none fit. An action that configures, edits, tests or fixes a tool itself "
-             "(its settings, its code, its env) is not a job that tool does: none fit then. A card fits only when it "
+             "(its settings, its code, its env) is not a job that tool does: none fit then. An action that already USES "
+             "a tool (calls its CLI or service, runs its own scripts or code from its source folder, or a script that "
+             "runs them) is that tool at work, not a rival to it: that tool does not fit then, nor do the tools it is "
+             "built on or runs inside it (an action using the studio is also its render engines at work). A tool fits "
+             "only when it takes the action's real input and gives the output the action needs: frames of a public "
+             "video URL are not frames of a private studio project or a local take. A card fits only when it "
              "does the same job, not when it shares a word like owner, brief or account. None may fit.")
 
 
@@ -504,7 +509,12 @@ def _desc(g: dict, q: set = frozenset()) -> str:
     # The functions that share a word with the action first: a long tool cut at 900 characters hid unified_inbox.
     fns = sorted({f for e in ents for v in (e.get("fn") or {}).values() for f in v},
                  key=lambda f: (not (_words(f) & want), f))
+    # where the tool lives (its journal, doc and source paths): lets the judge see that an action running a script
+    # from that folder already USES the tool (2026-11-05: capture.py of MEDIA HUB/services/capture, the Creator
+    # Studio recorder, was stopped ~25 times with "use Video Studio Record a site")
+    src = "; ".join(dict.fromkeys(str(e.get("src") or "") for e in ents if e.get("src")))[:240]
     return (f"{_clean(g['name'], 90)}: {_clean(one, 200)}" + (f" | how: {hows}" if hows else "")
+            + (f" | lives in: {src}" if src else "")
             + (f" | functions: {', '.join(fns[:40])}" if fns else ""))
 
 
@@ -513,8 +523,9 @@ def _judge_tools(intent: str, text: str, cand: list[dict]) -> list[dict] | None:
     try:
         sys.path.insert(0, str(HERE))
         import judge
-        q = _words(f"{intent} {text[:1200]}")
-        pick = judge.judge(f"{intent}\n{text[:1200]}", [_desc(g, q) for g in cand], task=TOOL_TASK, tmax=900, model=judge.STRONG, ordered=True)
+        # 3600: at 1200 a long command alone filled the window and the scripts it runs never reached the judge
+        q = _words(f"{intent} {text[:3600]}")
+        pick = judge.judge(f"{intent}\n{text[:3600]}", [_desc(g, q) for g in cand], task=TOOL_TASK, tmax=900, model=judge.STRONG, ordered=True)
     except Exception:
         return None
     return None if pick is None else [cand[i] for i in pick]
@@ -560,6 +571,11 @@ def _local_files(cmd: str, cwd: str) -> str:
             continue
         p = re.sub(r"^/([a-z])/", r"\1:/", p)
         cands = [p] if re.match(r"^([A-Za-z]:)?[/\\]|^~", p) else [os.path.join(base, p)] if base else []
+        if base and p.startswith("/") and not os.path.isfile(p):
+            # a script that runs on a server (ssh host 'bash /tmp/x/build_demo.sh'): its source usually sits next to
+            # where the command works from; without it the judge saw no script and offered box_job to a build that
+            # already runs through box_job (2026-11-05)
+            cands.append(os.path.join(base, os.path.basename(p)))
         for c in cands:
             c = os.path.expanduser(c)
             k = os.path.normcase(os.path.abspath(c))
@@ -569,12 +585,23 @@ def _local_files(cmd: str, cwd: str) -> str:
             try:
                 if os.path.getsize(c) < 400_000:
                     with open(c, encoding="utf-8", errors="replace") as fh:
-                        out.append(fh.read(4000))
+                        out.append(f"# file: {os.path.basename(c)}\n" + fh.read(4000))
             except OSError:
                 pass
         if len(out) >= 3:
             break
-    return "\n".join(out)
+    return _FILE_SEP.join(out)
+
+
+_FILE_SEP = "\n# --- next file ---\n"   # shell comments: readonly_probe skips them
+
+
+def _heads(files: str, n: int = 1800) -> str:
+    """An equal share of n characters for EACH local file: the first script cut at n hid the others (2026-11-05: a
+    command that edits an old pc script and then runs run_take.sh, the Video Studio capture runner, showed the
+    judge only the old script's header and was stopped as a rival of the Video Studio)."""
+    parts = [x for x in files.split(_FILE_SEP) if x.strip()]
+    return _FILE_SEP.join(x[:n // len(parts)] for x in parts) if parts else ""
 
 
 _TOOL_MARKS = ("INSTALL.md", "mcpize.yaml", "SKILL.md", ".claude-plugin", "tool_concepts.json")
@@ -904,7 +931,9 @@ def _check_concepts(call: dict, seen: dict) -> dict | None:
         return None
     # The judge picks among the candidates (2026-11-03: a session reading DMs of an account was shown Bidbot and
     # Gumroad, never Social Engine's message reader; the concept score cannot tell "read messages" from "publish").
-    picked = _judge_tools(intent, text, cand)
+    # The judge sees what the action RUNS, not only its description: the command and the local scripts it runs or
+    # feeds (2026-11-05: "bash run_take.sh room8 1" runs capture.py, the very tool the judge kept recommending).
+    picked = _judge_tools(intent, chr(10).join((text, code[:1500], _heads(files))), cand)
     if picked is not None:
         if not picked:
             return None
@@ -993,7 +1022,7 @@ def check(call: dict, seen: dict) -> dict | None:
     named = text + " " + code[:4000]
     cand = [g for g in _lexical_cands(f"{intent}\n{text}\n{code[:3000]}\n{files[:1000]}")
             if g["score"] >= LEX_MIN and (g["key"].startswith("card:") or not names_tool(tool_index(), g["key"], named))]
-    picked = _judge_tools(intent, f"{text}\n{code[:1500]}", cand) if cand else None
+    picked = _judge_tools(intent, chr(10).join((text, code[:1500], _heads(files))), cand) if cand else None
     if not picked:
         return None
     seen[key] = 1

@@ -32,7 +32,7 @@ from pathlib import Path
 HOME = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal")))
 DIR = HOME / "owner_briefs"
 DAYS = int(os.environ.get("JOURNAL_BRIEF_DAYS") or 21)
-VERSION = "3"  # bump when PROMPT changes: every brief is written again
+VERSION = "6"  # bump when PROMPT changes: every brief is written again
 BRIEF_EVERY = 8  # messages: the whole brief comes back this often for a project in play
 _HEAD = re.compile(r"^## (\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?\s*(?:\[([\w-]+)\])?(.*)$")
 _OWNER_TAGS = {"correction", "decision", "verdict", "rule", "owner", "lesson"}
@@ -82,8 +82,34 @@ def collect(path: str) -> tuple[str, list[str], list[str]]:
     src = ("DECIDED (owner decisions, standing):\n" + "\n".join(f"- {d}" for d in decided)
            + "\n\nOPEN HANDOFF ITEMS:\n" + "\n".join(handoff)
            + f"\n\nOWNER CORRECTIONS, DECISIONS, VERDICTS AND OWNER QUOTES OF THE LAST {DAYS} DAYS (oldest first):\n"
-           + "\n\n".join(entries))
+           + "\n\n".join(entries) + _company_experiments(Path(path).name))
     return src, decided, heads[-6:]
+
+
+def _company_experiments(journal_name: str) -> str:
+    """The live experiments of the AI team that works on this project (its EXPERIMENTS.md names the journal).
+    2026-11-03: asked "what are we doing on Oddsboard", the PC session read only the project journal and the bot,
+    said nothing was in motion and that nobody knew how the winners earn more premium, while Forecast Desk had 4
+    live experiments with verdict dates and two desks studying exactly that. Opt-in: JOURNAL_COMPANIES_DIR."""
+    root = os.environ.get("JOURNAL_COMPANIES_DIR")
+    if not root or not Path(root).is_dir():
+        return ""
+    out = []
+    for exp in sorted(Path(root).glob("*/EXPERIMENTS.md")):
+        try:
+            txt = exp.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        if re.sub(r"\.md$", "", journal_name, flags=re.I) not in txt:
+            continue
+        # the exact headings ("## What \"live\" means for this desk" comes first and is not the list)
+        m = re.search(r"^## Live\s*\n(.*?)(?=^## |\Z)", txt, re.M | re.S)
+        live = m.group(1) if m else ""
+        m = re.search(r"^## Reads[^\n]*\n(.*?)(?=^## |\Z)", txt, re.M | re.S)
+        reads = m.group(1) if m else ""
+        out.append(f"\n\nLIVE EXPERIMENTS OF THE COMPANY {exp.parent.name} (its own tests, owners and verdict dates):\n"
+                   + live[:7000] + ("\nLATEST READS:\n" + reads[-2500:] if reads else ""))
+    return "".join(out)
 
 
 PROMPT = """You keep the memory of a solo founder's project for the AI sessions that work on it.
@@ -98,7 +124,8 @@ Write at most 16 lines, English, at most 240 characters each, each with its date
   why, e.g. "bigger orders to earn more premium") and then its name and the number that killed it, so the same idea
   with another number or name is recognized too. One idea per line.
 - OPEN [dd/mm] the thread that is open right now: what is running, what result is awaited and when, what the owner
-  already approved. At most 3 OPEN lines.
+  already approved, AND every live experiment of the company that works on the project (name, what it tests, who
+  owns it, verdict date). At most 6 OPEN lines.
 No infrastructure trivia, no file paths, no md5s, no state that changes by the hour. Plain words. Output only the
 lines, each starting with "- RULE", "- LOST" or "- OPEN".
 
@@ -171,8 +198,14 @@ def lines_for(path: str) -> list[str]:
         return []
     h = hashlib.sha1((VERSION + src).encode("utf-8")).hexdigest()
     if rec.get("hash") != h or rec.get("by") != "judge":
-        import judge
-        if judge.available():
+        # Only a judge can rebuild it: without one (the box, JOURNAL_JUDGE off) every rebuild was a detached python
+        # that rewrote the same rule lines, about every 10 minutes per project per session (found 2026-11-03).
+        try:
+            import judge
+            can = judge.available()
+        except Exception:
+            can = False
+        if can:
             _rebuild_later(path)
         elif rec.get("hash") != h:
             rec = {}
@@ -193,7 +226,7 @@ def brief_text(path: str, lines: list[str] = None, partial: bool = False) -> str
 
 
 PROMPT_TASK = ("You decide which lines of a project's owner brief apply to the owner's new message, so the AI answering "
-               "him has them in mind. The message may be fast Spanish with typos, angry, or vague. A line applies when "
+               "him has them in mind. The message may be fast, in any language, with typos, angry, or vague. A line applies when "
                "the message is about its topic, OR when the owner complains that something repeats, that he already "
                "said it, that the AI goes in circles or does not listen: then every correction about repeating, looping, "
                "or what was already tried applies. When the owner asks how things are going, what is new or where we are, the OPEN lines apply.")
@@ -240,7 +273,7 @@ def stop_check(reply: str, paths: list[str]) -> str:
     lines = "\n".join(f"{i + 1}. {ln}" for i, (_, ln) in enumerate(rows))
     try:
         out = judge._run(STOP_TASK.format(reply=reply[:8000], lines=lines, open="\n".join(opened) or "(nothing)"),
-                         model=judge.STRONG)
+                         model=judge.VERDICT)
         m = re.search(r"\{.*\}", out, re.S)
         breaks = json.loads(m.group(0)).get("breaks") or [] if m else []
     except Exception:
@@ -256,10 +289,9 @@ def stop_check(reply: str, paths: list[str]) -> str:
             bad.append(f'{rows[i][0]}: {rows[i][1]}\n  your words: "{b.get("quote")}"')
     if not bad:
         return ""
-    return ("OWNER BRIEF CHECK, BEFORE THE OWNER READS YOUR REPLY: it breaks what the owner already said:\n"
-            + "\n".join(bad) + "\nRewrite the answer now so it follows these lines: do not propose again what was "
-            "tried or rejected, and say plainly what you will do instead (or that nothing new is proposed). Do not "
-            "mention this check.")
+    from quickmap import FIX_ONLY
+    return ("OWNER BRIEF CHECK OF THE REPLY YOU JUST GAVE: it breaks what the owner already said:\n"
+            + "\n".join(bad) + "\n" + FIX_ONLY)
 
 
 if __name__ == "__main__":

@@ -10,29 +10,39 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 
 ## What it does, in plain words
 
-- **Journals your AI must read.** In Claude Code, the journals mod stops the first edit of a piece of your project
-  until the AI has really read that piece's journal. A plain retry does not get through; reading the journal does.
+- **Journals your AI must read.** In Claude Code, the first time your AI touches a piece of your project, the
+  journals mod hands it that piece's journal brief with the call: the handoff, the current state, what is pending,
+  what was decided, what exists, the rules and the newest entries. No extra turn, no skipping it.
 - **A map before every change.** Before your AI edits a file, runs a command or briefs an agent, it sees a short map
   of that thing: which journal talks about it, who is working on it now, what was already decided, what already
   exists, the latest entries and what is still pending.
 - **It warns when your AI repeats itself.** When the AI is about to build its own way of doing a job a tool you
-  already have does, it is shown that tool and stopped once. When a reply proposes something your journals already
-  have a verdict on, or lists as pending something a journal says shipped, the AI is told so in its next turn.
+  already have does, it is shown that tool. When a reply proposes something your journals already have a verdict
+  on, or lists as pending something a journal says shipped, the AI is told so in its next turn.
 - **It warns about stale status.** Lines that state something that changes (an account is active, a service is
   live, a balance) are marked "check live before repeating it" in the map. When the AI writes an entry that states
   such a status without saying how it was checked, the entry is still saved and the AI gets a warning.
 - **Your rules, in your words.** Write your rules as dated lines in a rules journal (`RULES_JOURNAL.md` or any
-  `*_RULES_JOURNAL.md`). When an action shares the words of a rule, the rule is shown and the action stops once.
+  `*_RULES_JOURNAL.md`). When an action shares the words of a rule, the rule is shown next to it (with
+  `JOURNAL_AI_CHECKS` on, the action also stops once).
+  With the judge on, each rule about an exact pattern becomes a test written once, which then checks every command
+  and file write for free; rules that need judgment are shown as a reminder next to the commands they are about.
 - **Finds what you meant, in any language (optional).** A small model on your own processor gives every entry a
   meaning, so a question in other words or another language finds the entry that says the same thing. Your journals
   never leave your computer.
 - **Old decisions never pass as current.** When a later entry replaced a decision, or states a different price or
   number for it, the decision is shown with that newer line first and your AI checks the live source and updates it.
 - **It stops rebuilding what already exists.** Before your AI writes a new script or briefs an agent to build
-  something a shipped entry already did, it is shown that entry and stopped once.
+  something a shipped entry already did, it is shown that entry (with `JOURNAL_AI_CHECKS` on, it is also stopped
+  once).
 - **Your decisions guard the reply (optional).** Each project gets an owner brief: your rules, what you already tried
-  and lost, and the thread you approved. With the reply check on, a reply that proposes again what you rejected,
-  or describes one of your tools against its own sheet, is sent back for a rewrite before you read it.
+  and lost, and the thread you approved. With the reply check on, each thing a reply proposes or states is checked
+  against your journals: when it proposes again what you rejected or already did, states what a journal contradicts,
+  or calls missing something that already exists, your AI writes a short correction right away.
+- **Cheap by default.** No AI reads each command or edit unless you ask for it (`JOURNAL_AI_CHECKS`); the briefs,
+  your exact rule tests, the reminders, an optional guard against flooding a shared server and an optional guard
+  that holds paid runs until you say yes cost nothing. The background rule compile is light: it starts only when a
+  rule line changed, at the lowest priority.
 - **Old rules carry their newer word.** A rule or decision older than a week is shown with the newer entry that
   changed it, so your AI never follows an outdated rule as current.
 - **A calm status line.** Under your prompt: `Journals DNA · active`, and one plain sentence only when something
@@ -47,6 +57,9 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | `server.py` | The journal MCP server: 35 tools to read, search, write and keep journals (works with any MCP client) |
 | `quickmap.py`, `quick_hook.py` | The quick map and the checks the mod runs (local, no network; no AI unless you switch the judge on) |
 | `judge.py`, `owner_brief.py` | Optional: the judge (your `claude` command decides what is really relevant) and the owner brief of each project |
+| `rulecompile.py`, `cmdguard.py` | Your rules as exact tests and reminders (written once by the judge, run with no AI), the shared server flood guard and the paid-run guard |
+| `actioncheck.py`, `newest.py` | Optional AI check of each command, tool call and write (off by default), and "the newest word wins" before any stop |
+| `modreport.py` | What the mod did and what it cost, from its own logs |
 | `toolmap.py`, `tool_concepts.json` | "A tool already does this": matches an action to the tools and flows your journals list |
 | `livecopy.py`, `ruledupes.py` | Warnings for a command on the wrong copy of a deployed folder, and for a rule written twice |
 | `obsidian.py` | Builds the Obsidian map of your journals |
@@ -57,19 +70,27 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | `examples/DEMO_PROJECT.md` | A small journal to try everything on (copy it as `DEMO_JOURNAL.md` into a test folder) |
 | `BRAIN_MAP_TEMPLATE.md`, `RULES_TEMPLATE.md` | Copy-paste starting points |
 
-## New in 1.4.0
+## New in 1.5.0
 
-- A calm status line: `Journals DNA · active`, one plain sentence per real event, never internal wording.
-- Newer word on old rules: an old rule or decision is shown with the newer entry that changes it.
-- The reply check against your own decisions (opt in: `JOURNAL_REPLY_GATE=on` with the judge on): a reply that
-  breaks your rules or proposes again what you already lost is sent back before you read it, with the words quoted.
-- Judged manual hints: a lesson is pointed at one of your manuals only when the judge agrees it belongs there.
-- Your own tools in `tools.json`: a message that names one carries what it does today.
-- The judge is optional and off by default; without it the checks fall back to the rules of 1.3.0. See INSTALL.md.
+- The first touch of a piece carries its journal brief instead of a stop: no extra turn.
+- Your rules become exact tests, written once by the judge and run on every command and write with no AI; a broken
+  rule stops the call once, the same call again passes. Judgment rules come back as reminders, once per session.
+- No AI check of each call by default (`JOURNAL_AI_CHECKS=risky` or `all` to switch it on).
+- The reply check reads what the reply proposes and states, and asks for a short correction, never a repeat.
+- Nothing waits after a finished reply: the end-of-turn check gets 12 seconds at most.
+- An optional flood guard for shared servers (`box_hosts.txt`), one setting for the model that decides stops
+  (`JOURNAL_VERDICT_MODEL`), and `modreport.py` to see what the mod did and cost.
+- An optional paid-run guard: what you list in `paid_patterns.txt` is stopped until your latest message says yes.
+  Off without the file.
+- The background rule compile is light by design: only a changed rule line starts it, at the lowest priority
+  (`JOURNAL_AUTOCOMPILE=off` turns it off).
+- Fix: a plain `RULES_JOURNAL.md` is read as rules.
 
 ## Install
 
-Full steps, written so you can hand the file to your AI: [INSTALL.md](INSTALL.md). Short version, from this folder:
+One install sets up both parts: the journal server and the journals mod (the Claude Code plugin that makes your AI
+read the journal before it acts). Full steps, written so you can hand the file to your AI, with every file the
+installer writes and how to undo it: [INSTALL.md](INSTALL.md). Short version, from this folder:
 
 ```bash
 python3 -m venv .venv
@@ -78,10 +99,13 @@ python3 -m venv .venv
 .venv/bin/python install_mod.py                    # Windows: .venv\Scripts\python install_mod.py
 ```
 
-Then open a new Claude Code session and ask: `journal_quick("<a word from your project>")`.
+The dry run prints every change and writes nothing; the second command installs the server and the mod (two keys in
+`~/.claude/settings.json`, backed up first, plus the server and plugin entries the `claude` command keeps). Then
+restart Claude Code (close it and open a new session) and ask: `journal_quick("<a word from your project>")`.
+To undo it all: `install_mod.py --uninstall`.
 
-Other MCP clients (Cursor and others) can run `server.py` as a normal MCP server; the mod and its stops are a
-Claude Code feature.
+The mod works in Claude Code only. Other MCP clients (Cursor and others) can run `server.py` as a normal MCP server
+and get the 35 tools without the mod.
 
 ## The tools
 
@@ -107,7 +131,9 @@ It writes `_obsidian/START HERE.md`, `_obsidian/Journals.base`, `_obsidian/Journ
 ## Your data
 
 Everything is local: the journals are your files, the index lives in `~/.journal`. The quick map and the mod make no
-network calls. The store tools (`journal_market`, `journal_get`, ...) and `check_for_update` talk to vibedna.ai only
-when you call them. See [SECURITY.md](SECURITY.md).
+network calls of their own: the optional search by meaning talks only to its service on your computer (or to your
+team's embedding service when you set one), and the optional judge runs your own `claude` command on your plan. The
+store tools (`journal_market`, `journal_get`, ...) and `check_for_update` talk to vibedna.ai only when you call them.
+See [SECURITY.md](SECURITY.md).
 
 Vibedna, vibedna.ai

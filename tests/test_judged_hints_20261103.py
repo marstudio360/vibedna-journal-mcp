@@ -9,27 +9,59 @@ import judge  # noqa: E402
 import quickmap  # noqa: E402
 
 
-def test_a_reply_that_contradicts_a_tool_sheet_is_sent_back(tmp_path, monkeypatch):
-    monkeypatch.setattr(quickmap, "OUR_TOOLS", {"Social Engine": "social engine"})
-    monkeypatch.setattr(quickmap, "TOOL_FACTS", {"Social Engine": "It publishes through each network's official API."})
-    monkeypatch.setattr(judge, "available", lambda: True)
-    reply = "Desde el celular funciona. Pero Social Engine publica usando el navegador de la PC, no ves lo que hace."
-    monkeypatch.setattr(judge, "_run", lambda prompt, **k: json.dumps({"wrong": [
-        {"tool": "Social Engine", "quote": "publica usando el navegador de la PC", "sheet_says": "official API"}]}))
-    out = quickmap.tool_claims_check(reply)
-    assert "TOOL CHECK" in out and "publica usando el navegador de la PC" in out
-    # a quote the judge invents (not in the reply) never blocks
-    monkeypatch.setattr(judge, "_run", lambda prompt, **k: json.dumps({"wrong": [
-        {"tool": "Social Engine", "quote": "posts only through a hidden browser", "sheet_says": "official API"}]}))
-    assert quickmap.tool_claims_check(reply) == ""
-
-
-def test_no_tool_named_means_no_judge_call(monkeypatch):
+def _said_world(monkeypatch, verdict):
     calls = []
+
+    def fake_run(prompt, **k):
+        calls.append(k.get("model"))
+        if "From the Reply" in prompt:
+            return json.dumps({"items": [{"quote": "primero reviso los ganadores en Adscope", "kind": "proposal",
+                                          "query": "review Adscope winners first"}]})
+        return json.dumps({"wrong": verdict()})
     monkeypatch.setattr(judge, "available", lambda: True)
-    monkeypatch.setattr(judge, "_run", lambda prompt, **k: calls.append(1) or "{}")
-    assert quickmap.tool_claims_check("Todo listo, el sitio quedo publicado y pasaron las pruebas.") == ""
-    assert not calls
+    monkeypatch.setattr(judge, "_run", fake_run)
+    import meaning
+    hit = lambda q, **k: [  # noqa: E731
+        {"journal": "FAST_SALES_JOURNAL.md", "line": 311, "heading": "2026-11-01 [research] AI infoproduct research", "path": ""}]
+    monkeypatch.setattr(meaning, "query", hit)
+    monkeypatch.setattr(meaning, "query_strict", hit)
+    monkeypatch.setattr(meaning, "query_many_strict", lambda asks, **k: [hit("") for _ in asks])
+    return calls
+
+
+REPLY = "La oferta pasa a Journals DNA + 9 diarios + el conector Pro, y primero reviso los ganadores en Adscope."
+
+
+def test_a_proposal_the_journals_show_done_is_sent_back(monkeypatch):
+    # owner 2026-11-03: the memory offer had been built FROM Adscope winners on 11-01; the reply offered to check them
+    _said_world(monkeypatch, lambda: [{"item": 1, "why": "already done on 11-01", "evidence": "FAST_SALES_JOURNAL.md:311"}])
+    out = quickmap.said_check(REPLY, "la idea es ofrecer un ad que incluya todo el conector")
+    assert "primero reviso los ganadores en Adscope" in out and "FAST_SALES_JOURNAL.md:311" in out
+
+
+def test_either_of_two_verdicts_counts(monkeypatch):
+    runs = iter([[], [{"item": 1, "why": "already done", "evidence": "X:1"}]])
+    _said_world(monkeypatch, lambda: next(runs))
+    assert quickmap.said_check(REPLY, "") != ""
+
+
+def test_a_quote_not_in_the_reply_never_blocks(monkeypatch):
+    calls = _said_world(monkeypatch, lambda: [])
+    assert quickmap.said_check(REPLY, "") == ""
+    assert calls.count(judge.VERDICT) == 2    # the verdict (the stop decision) is asked twice, at once
+
+
+def test_a_memory_that_does_not_answer_never_passes_the_reply(monkeypatch):
+    # 2026-11-04: every search timed out at 2.5 s and came back empty; the judge saw "(no evidence)" and a false claim
+    # ("the mod searches words, not meaning") passed. A search that did not answer is not "nothing found".
+    _said_world(monkeypatch, lambda: [])
+    import meaning
+
+    def down(q, **k):
+        raise meaning.Down("timed out")
+    monkeypatch.setattr(meaning, "query_many_strict", down)
+    out = quickmap.said_check(REPLY, "")
+    assert out.startswith("NOT CHECKED")
 
 
 def test_manual_hint_follows_the_judge(monkeypatch):

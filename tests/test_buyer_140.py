@@ -43,7 +43,7 @@ def _run(args: list, home: Path, stdin: str = "", **extra) -> subprocess.Complet
 TOOLS_CODE = ("import json, quickmap as q; print(json.dumps([q.OUR_TOOLS, q.TOOL_FACTS, "
               "q._named_tools('does the mailbot post through the browser? and the shop scaner?'), "
               "q._tool_cards_block('does the mailbot post through the browser?'), "
-              "q.tool_claims_check('The mail robot posts through a browser. ' * 20)]))")
+              "q.said_check('The mail robot posts through a browser. ' * 20)]))")   # 1.5.0: said_check replaced tool_claims_check
 
 
 def test_no_tools_are_listed_until_you_list_yours():
@@ -88,7 +88,8 @@ def test_no_tool_named_means_no_judge_call_even_with_a_judge(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("the judge was called")
     monkeypatch.setattr(judge, "_run", boom)
-    assert quickmap.tool_claims_check("Social posting goes through the browser. " * 20) == ""
+    # (1.5.0: the reply's tools check is part of the end-of-turn check, said_check, which reads every reply with the
+    # judge on; its tests are in test_judged_hints_20261103.py and test_buyer_150.py)
     assert quickmap._tool_cards_block("does the mail robot use the browser?") == ""
 
 

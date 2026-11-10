@@ -18,7 +18,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-TARGET = re.compile(r"(?:OWNER_SAID|[\w-]+_RULES)_JOURNAL\.md", re.I)
+TARGET = re.compile(r"(?:OWNER_SAID|RULES)_JOURNAL\.md", re.I)
 NEW_RULE = re.compile(r"-\s(20\d\d-\d\d-\d\d):\s([^\"\n]{40,})")
 STOP = set("""the and for that this with from into when what which while their there them they then than will would
 should must never always every each also only just more most some such have has had been being were was are its it's
@@ -38,8 +38,8 @@ def _rule_files() -> list[str]:
             try:
                 c = sqlite3.connect(str(db))
                 try:
-                    return [r[0] for r in c.execute("SELECT DISTINCT path FROM journals WHERE name = ? OR name LIKE ? ESCAPE '!'",
-                                                    ("OWNER_SAID_JOURNAL.md", "%!_RULES!_JOURNAL.md"))]
+                    return [r[0] for r in c.execute("SELECT DISTINCT path FROM journals WHERE name IN (?, ?) OR name LIKE ? ESCAPE '!'",
+                                                    ("OWNER_SAID_JOURNAL.md", "RULES_JOURNAL.md", "%!_RULES!_JOURNAL.md"))]
                 finally:
                     c.close()
             except sqlite3.Error:

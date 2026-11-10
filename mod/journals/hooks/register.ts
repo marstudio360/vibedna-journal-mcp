@@ -2,12 +2,13 @@
 // The search itself is the journal tool's quick map (quick_hook.py next to its server.py, no AI, ~0.3 s);
 // this mod decides when it runs and puts the answer where your AI cannot skip it:
 //   - tool.call: a file edit, or a command that writes or reaches a server, gets the map; the first touch
-//     of a piece in a "## Brain map" table is DENIED until the session really read that piece's journal
-//     (a plain retry is denied again; quick_hook.py's gate decides, with an escape on the 3rd attempt only
-//     when the read is impossible: journal file missing, or journal reads failing)
+//     of a piece in a "## Brain map" table carries that piece's JOURNAL BRIEF (its Handoff, state, pending,
+//     decisions, what exists, rules and newest entries, read from the file) and goes through; the brief counts as
+//     the read. Only when the journal file is missing is the touch denied (quick_hook.py's gate, escape on the 3rd
+//     attempt). Your exact rule tests (rulecompile.py) and the server flood counter (cmdguard.py) run first, no AI
 //   - tool.call that writes code, runs a script or a remote command, or briefs an agent: the TOOLS map first
 //     (toolmap.py: the tools and working flows that already do it, matched by concept); when the action builds its
-//     own way of doing what a tool does, it is DENIED ONCE with that list (2026-10-26: an Instagram carousel was
+//     own way of doing what a tool does, the list comes with it (DENIED ONCE only with JOURNAL_AI_CHECKS=risky|all) (2026-10-26: an Instagram carousel was
 //     posted by a loose Playwright script while the posting tool sat unused)
 //   - tool.call on reads (Read, Grep, Glob, read-only commands, data queries): the first read of a mapped piece or a
 //     project folder with journals in a session goes through the same gate; later, the first read in each user
@@ -35,6 +36,7 @@ const AGENT = /^(Agent|Task)$/
 const JOURNAL_FILE = /journal[^\\/]*\.md$/i
 const READ = /^(Read|Grep|Glob)$/
 const DATA = /^mcp__(?!journal__).*(sql|query)/i
+const MCP = /^mcp__/
 const JOURNAL_READ_TOOL = /^mcp__journal__journal_(read|read_section|handoff_brief|search|quick)$/
 const JOURNAL_SAVE_TOOL = /^mcp__journal__journal_(append|update_section|decision_add|capability_add)$/
 
@@ -54,9 +56,9 @@ const BRAIN = [
   'Before touching, building or answering about anything, call journal_quick("<word or file>") and read what it',
   'points to: what was decided, what exists, what is in flight, who is working on it now. There are no owners:',
   'anyone may take any piece once its context is read. The journals mod shows the map by itself when you touch',
-  'a mapped piece, and keeps it stopped until you have read that piece\'s journal (a plain retry does not pass).',
+  'a mapped piece, and hands you that piece\'s journal brief with the call: read it before you act.',
   'Before writing or running your own script for a job, use the tool that already does it: the mod lists them',
-  '("TOOLS THAT ALREADY DO THIS") and stops once; if none fits, say in one line why and improve that tool.',
+  '("TOOLS THAT ALREADY DO THIS"); if none fits, say in one line why and improve that tool.',
 ].join('\n')
 
 type Out = { permissionDecision?: string; permissionDecisionReason?: string; additionalContext?: string }
@@ -80,7 +82,13 @@ async function quick($: any, call: Record<string, unknown>, prompt: boolean | 'r
       // reports_reads: this mod reports journal reads, so the gate may wait for one (older mods never did).
       stdin: JSON.stringify({ ...call, reports_reads: true, session_id: await $.session.id(), cwd: await $.session.cwd() }),
       // The owner brief asks the judge model (~5 s; the stop check reads a whole reply).
-      timeoutMs: prompt === 'stop' || prompt === true ? 30000 : 15000,
+      // The end-of-turn check reads the reply, searches every journal for each claim and asks the judge twice (14-25 s
+      // measured 2026-11-03); at 30 s it was cut and said nothing.
+      // A command's check reads the owner's rules and asks the judge twice (8-19 s measured 2026-11-04); at 15 s it was
+      // cut and the command ran unchecked.
+      // The stop check holds the end of the turn, so it gets 12 s at most (2026-11-06: up to 60 s of "Philosophizing..."
+      // after a finished reply); past that the reply goes out unchecked rather than leaving the owner waiting.
+      timeoutMs: prompt === 'stop' ? 12000 : prompt === true ? 30000 : prompt === false ? 45000 : 15000,
       env: { PYTHONIOENCODING: 'utf-8' },
     })
     if (r.exitCode !== 0 || !r.stdout.trim()) return null
@@ -130,6 +138,13 @@ export const register: Register = on => {
       input = { paths: [e.file_path, e.path, e.tool === 'Glob' ? e.pattern : null, e.glob].filter(Boolean) }
     } else if (DATA.test(e.tool)) {
       input = { query: String(e.query ?? e.sql ?? JSON.stringify(e)).slice(0, 4000) }
+    } else if (MCP.test(e.tool) && !JOURNAL_READ_TOOL.test(e.tool) && !JOURNAL_SAVE_TOOL.test(e.tool)) {
+      // Any other MCP tool (browser, posting, mail, servers) is checked too, with the owner's latest message as its
+      // context (2026-11-04: a browser launch to find a mail already read on 11-03 ran with no check at all).
+      const { tool, ...args } = e
+      let a = ''
+      try { a = JSON.stringify(args) } catch {}
+      input = { mcp_tool: tool, args: a.slice(0, 3000) }
     } else if (JOURNAL_READ_TOOL.test(e.tool)) {
       const ran: any = await next(e)
       await report($, e, ran)
@@ -165,11 +180,14 @@ export const register: Register = on => {
   // new in plain chat, where no tool call ever reached the map). The note is for the AI only: it rides into the next
   // turn and is never drawn in the chat (2026-10-27: the owner saw it under his message, garbled, and asked what it was).
   let replyNote = ''
+  // Never awaited (2026-11-06, owner with a screenshot of "Philosophizing..." under a finished reply: "it cannot stay
+  // stuck after a reply, everything has to pass before"): this note is for the NEXT turn, so the turn ends at once and
+  // the check finishes in the background.
   on('turn.complete', async ($, e: any, next) => {
     const r = await next(e)
     if (e.agentId || e.reason !== 'answer' || !e.answer) return r
-    const out = await quick($, { reply: e.answer }, 'reply')
-    if (out?.additionalContext) replyNote = out.additionalContext
+    quick($, { reply: e.answer }, 'reply').then(out => { if (out?.additionalContext) replyNote = out.additionalContext })
+      .catch(() => {})
     return r
   })
 
@@ -187,6 +205,15 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     $.ui.status(ACTIVE)
+    // Your own start-of-session command, if you want one (a backup, a sync): a JSON array in JOURNAL_ON_SESSION_START,
+    // for example ["python3", "/path/backup.py"]; never awaited, so it never slows the start; unset by default.
+    const cmd = await $.env.get('JOURNAL_ON_SESSION_START')
+    if (cmd) {
+      try {
+        const argv = JSON.parse(cmd)
+        if (Array.isArray(argv) && argv.length) $.process.run(argv.map(String), { timeoutMs: 120000 }).catch(() => {})
+      } catch { /* a bad value is ignored */ }
+    }
     return next(e)
   })
 

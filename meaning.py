@@ -12,7 +12,8 @@ Pieces:
   - query(): asks the service; if it is not running it starts it in the background and returns [] this time,
     so a caller never waits and lexical search keeps working without it
 
-Optional: needs `fastembed` + `numpy`. Without them every function returns [] and nothing else changes.
+Optional: needs `fastembed` + `numpy` and one `python meaning.py build`. Until then every search returns []
+and nothing else changes.
 Env: JOURNAL_HOME (index), JOURNAL_MEANING_MODEL, JOURNAL_MEANING_CACHE (model files), JOURNAL_MEANING_PORT,
 JOURNAL_MEANING_THREADS, JOURNAL_MEANING_URL (team embedding service, see embed_server.py),
 JOURNAL_MEANING_MIN, JOURNAL_MEANING_PYTHON (interpreter for the service; callers only need the standard library),
@@ -54,7 +55,9 @@ PORT = int(os.environ.get("JOURNAL_MEANING_PORT", "47311"))
 THREADS = int(os.environ.get("JOURNAL_MEANING_THREADS", "2"))
 TEXT_CHARS = 700          # heading + the start of the body: where an entry says what it is about
 MIN_SCORE = float(os.environ.get("JOURNAL_MEANING_MIN") or (0.45 if URL else 0.38))   # below it a hit is noise for that model
-OFF = os.environ.get("JOURNAL_MEANING_OFF") == "1"
+# Off until it is set up: `python meaning.py build` writes meaning.json (or JOURNAL_MEANING_URL names a team
+# service). Without it no service is started, searches return nothing and the checks work without meaning.
+OFF = os.environ.get("JOURNAL_MEANING_OFF") == "1" or not (URL or CONF.exists())
 # Words that carry no topic in the owner's Spanish or English questions (only for the word half of the fusion)
 _STOP = set("que qué por para con los las del una uno como esto eso esta este pero porque cuando donde sobre todo "
             "the and for with this that what why how was were are from into about have has had not you your".split())
@@ -207,6 +210,13 @@ class _Index:
 
     def __init__(self):
         self.sig, self.keys, self.mat = None, [], None
+        self._lk = threading.Lock()
+
+    def snapshot(self):
+        """keys and matrix of the same load (a reload swaps both at once)."""
+        with self._lk:
+            self.ensure()
+            return self.keys, self.mat
 
     def ensure(self):
         import numpy as np
@@ -219,23 +229,43 @@ class _Index:
             rows = c.execute("SELECT path, line, heading, vec FROM entries_vec").fetchall()
         finally:
             c.close()
-        self.keys = [(p, l, h) for p, l, h, _ in rows]
-        self.mat = np.frombuffer(b"".join(r[3] for r in rows), dtype=np.float16).reshape(len(rows), -1).astype(np.float32) \
+        keys = [(p, l, h) for p, l, h, _ in rows]
+        mat = np.frombuffer(b"".join(r[3] for r in rows), dtype=np.float16).reshape(len(rows), -1).astype(np.float32) \
             if rows else None
-        self.sig = sig
+        self.keys, self.mat, self.sig = keys, mat, sig
 
     def search(self, q: str, k: int = 8, min_score: float = MIN_SCORE, path_like: str = "") -> list[dict]:
         """Meaning AND words, fused by rank (reciprocal rank fusion). Measured on the full index (18,429 entries,
         2026-10-30): meaning alone let generic sections ("Architecture", "EL HUECO") outrank the answer and missed
         exact names; words alone miss other phrasings and Spanish. Fused, the real cases land in the top 5."""
-        import numpy as np
-        self.ensure()
-        if self.mat is None or not q.strip() or (getattr(self, "model", "") and self.model != MODEL):
+        keys, mat = self.snapshot()
+        if mat is None or not q.strip() or (getattr(self, "model", "") and self.model != MODEL):
             return []
-        s = self.mat @ embed([q[:1000]])[0]
-        order = np.argsort(-s)[:400]
+        return self._rank(keys, mat, q, embed([q[:1000]])[0], k, min_score, path_like)
+
+    def search_many(self, asks: list) -> list:
+        """Several searches with ONE embedding call (the end-of-turn check asks 11 at once; one by one, behind a busy
+        service, they all timed out on 2026-11-04)."""
+        keys, mat = self.snapshot()
+        asks = [a for a in asks if isinstance(a, dict)][:24]
+        if mat is None or (getattr(self, "model", "") and self.model != MODEL):
+            return [[] for _ in asks]
+        qs = [str(a.get("q") or "")[:1000] for a in asks]
+        live = [i for i, q in enumerate(qs) if q.strip()]
+        vecs = embed([qs[i] for i in live]) if live else []
+        out = [[] for _ in asks]
+        for i, v in zip(live, vecs):
+            a = asks[i]
+            out[i] = self._rank(keys, mat, qs[i], v, int(a.get("k") or 8), float(a.get("min") or MIN_SCORE),
+                                str(a.get("path") or ""))
+        return out
+
+    def _rank(self, keys, mat, q, qv, k, min_score, path_like) -> list[dict]:
+        import numpy as np
+        s = mat @ qv
+        order = np.argsort(-s)[:900]
         vec_rank = {i: r for r, i in enumerate(order) if s[i] >= min_score}
-        pos = {(p, int(l)): i for i, (p, l, _) in enumerate(self.keys)}
+        pos = {(p, int(l)): i for i, (p, l, _) in enumerate(keys)}
         word_rank = {}
         words = [w for w in re.findall(r"[^\W_]{3,}", q.lower()) if w not in _STOP][:12]
         if words:
@@ -243,7 +273,7 @@ class _Index:
                 c = _conn()
                 try:
                     rows = c.execute("SELECT path, line FROM entries_fts WHERE entries_fts MATCH ? "
-                                     "ORDER BY bm25(entries_fts) LIMIT 400",
+                                     "ORDER BY bm25(entries_fts) LIMIT 900",
                                      (" OR ".join('"%s"' % w.replace('"', "") for w in words),)).fetchall()
                 finally:
                     c.close()
@@ -259,8 +289,12 @@ class _Index:
                 fused[i] = fused.get(i, 0.0) + 1.0 / (60 + r)
         out = []
         for i in sorted(fused, key=lambda x: -fused[x]):
-            p, l, h = self.keys[i]
+            p, l, h = keys[i]
             if path_like and path_like.lower() not in p.lower():
+                continue
+            # the owner's own messages (OWNER VOICE, ~8,000 entries) are asked for by name; mixed into every search
+            # they would push the project entries out of the top k
+            if not path_like and VOICE in p:
                 continue
             out.append({"path": p, "journal": Path(p).name, "line": int(l), "heading": (h or "")[:160],
                         "score": round(float(s[i]), 3), "by": "+".join(n for n, d in (("meaning", vec_rank), ("words", word_rank)) if i in d)})
@@ -294,9 +328,10 @@ def serve():
                 if u.path == "/health":
                     body = {"ok": True, "model": MODEL, "vectors": len(idx.keys)}
                 elif u.path == "/search":
-                    with lock:
-                        body = idx.search(qs.get("q", [""])[0], int(qs.get("k", ["8"])[0]),
-                                          float(qs.get("min", [MIN_SCORE])[0]), qs.get("path", [""])[0])
+                    # no shared lock with the sync: a sync embeds new entries for up to 120 s every minute, and every
+                    # search waited behind it (2026-11-04: 11 of 11 searches of a check timed out)
+                    body = idx.search(qs.get("q", [""])[0], int(qs.get("k", ["8"])[0]),
+                                      float(qs.get("min", [MIN_SCORE])[0]), qs.get("path", [""])[0])
                 else:
                     self.send_response(404); self.end_headers(); return
                 self._send(body)
@@ -307,9 +342,13 @@ def serve():
             # /score {"q": text, "texts": [...]}: how close each text is to q (the "already built" check compares
             # what a new script says it does with the journal lines that name an existing script).
             try:
-                if urllib.parse.urlparse(self.path).path != "/score":
+                path = urllib.parse.urlparse(self.path).path
+                if path not in ("/score", "/search_many"):
                     self.send_response(404); self.end_headers(); return
                 req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                if path == "/search_many":
+                    self._send(idx.search_many(req.get("asks") or []))
+                    return
                 texts = [str(t)[:1000] for t in (req.get("texts") or [])][:64]
                 q = str(req.get("q") or "")[:1000]
                 body = [round(float(x), 3) for x in embed(texts) @ embed([q])[0]] if texts and q.strip() else []
@@ -359,21 +398,75 @@ def _start_service():
         pass
 
 
-def query(q: str, k: int = 8, min_score: float = MIN_SCORE, path_like: str = "", timeout: float = 1.5) -> list[dict]:
-    """Entries that mean the same as q. Never blocks long and never raises: [] when the service is down."""
+VOICE = "OWNER_VOICE_JOURNAL"
+
+
+class Down(Exception):
+    """The meaning service did not answer (down, or slower than the time given, after the retry)."""
+
+
+def query_strict(q: str, k: int = 8, min_score: float = MIN_SCORE, path_like: str = "", timeout: float = 2.5,
+                 retry_timeout: float = 6.0) -> list[dict]:
+    """Like query(), but a search that did not answer raises Down instead of looking like "nothing found".
+    The checks need the difference (2026-11-04: every search of the end-of-turn check timed out at 2.5 s, came back
+    [], and a false reply passed as "no evidence"; two minutes later the same searches answered in 0.8 s)."""
     if OFF or not q or not q.strip():
         return []
     url = f"http://127.0.0.1:{PORT}/search?" + urllib.parse.urlencode(
         {"q": q[:1000], "k": k, "min": min_score, "path": path_like})
+    last: Exception | None = None
+    for t in (timeout, retry_timeout):
+        try:
+            with urllib.request.urlopen(url, timeout=t) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            last = e
+            # Start a service ONLY when nobody holds the port (connection refused). A slow answer means one is
+            # loading: starting another copy is what froze the PC on 2026-10-30.
+            reason = getattr(e, "reason", e)
+            if isinstance(reason, ConnectionRefusedError) or "refused" in str(reason).lower() or "10061" in str(reason):
+                _start_service()
+                break
+    raise Down(str(last))
+
+
+def query_many_strict(asks: list, timeout: float = 8.0, retry_timeout: float = 15.0) -> list:
+    """Several searches in one request: asks = [{"q", "k", "min", "path"}]; one hit list per ask. Raises Down when the
+    service did not answer. A service started before /search_many existed answers 404: then the searches go one by
+    one, three at a time."""
+    if OFF:
+        return [[] for _ in asks]
+    req_body = json.dumps({"asks": [{"q": a.get("q", ""), "k": a.get("k", 8), "min": a.get("min", MIN_SCORE),
+                                     "path": a.get("path", "")} for a in asks]}).encode()
+    last: Exception | None = None
+    for t in (timeout, retry_timeout):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{PORT}/search_many", data=req_body,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=t) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(3) as pool:
+                    return list(pool.map(lambda a: query_strict(a.get("q", ""), a.get("k", 8), a.get("min", MIN_SCORE),
+                                                                a.get("path", ""), timeout=6.0, retry_timeout=10.0), asks))
+            last = e
+        except Exception as e:
+            last = e
+            reason = getattr(e, "reason", e)
+            if isinstance(reason, ConnectionRefusedError) or "refused" in str(reason).lower() or "10061" in str(reason):
+                _start_service()
+                break
+    raise Down(str(last))
+
+
+def query(q: str, k: int = 8, min_score: float = MIN_SCORE, path_like: str = "", timeout: float = 1.5) -> list[dict]:
+    """Entries that mean the same as q. Never raises: [] when the service is down (maps and notes, where a missing
+    hit costs nothing). A check that must not pass on silence uses query_strict()."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return json.loads(r.read())
-    except Exception as e:
-        # Start a service ONLY when nobody holds the port (connection refused). A slow answer means one is
-        # loading: starting another copy is what froze the PC on 2026-10-30.
-        reason = getattr(e, "reason", e)
-        if isinstance(reason, ConnectionRefusedError) or "refused" in str(reason).lower() or "10061" in str(reason):
-            _start_service()
+        return query_strict(q, k, min_score, path_like, timeout, retry_timeout=max(timeout, 3.0))
+    except Down:
         return []
 
 

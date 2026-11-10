@@ -939,7 +939,7 @@ def newer_text(nb: dict, what: str) -> str:
 # Shapesmith, build it on the box" while SHOPSITE_FULL_JOURNAL had "[ship] CRAFT ENGINES CONNECTED" and "[ship] CRAFT
 # ENGINES IN THE BROWSER LIVE" of 2026-10-27 (titles that never name Shapesmith; the body does, also as
 # "shapesmith-cli"). The map's ABOUT lines only read titles, a map shown again dropped every LATEST line, and the
-# CREATIVE_HUB Current state (dated 2026-10-25, "Built? NOT built") looked like today's truth. The newest ship entries
+# MEDIA_HUB Current state (dated 2026-10-25, "Built? NOT built") looked like today's truth. The newest ship entries
 # that mention the word anywhere, in any journal, now show first and survive the short re-shown map.
 _SHIP_HEAD_TAG = re.compile(r"^\s*\[(?:ship|shipped|live|deploy)\]", re.I)
 _SHIP_HEAD_WORD = re.compile(r"\b(?:LIVE|BUILT|CONNECTED|INSTALLED|SHIPPED|DEPLOYED)\b")
@@ -2209,7 +2209,7 @@ def _owner_rule_lines(intent: str, debug: bool = False, scope: dict = None, _all
     try:
         c = _conn()
         try:
-            paths = [r[0] for r in c.execute("SELECT DISTINCT path FROM journals WHERE name = ? OR name LIKE ? ESCAPE '!'", ("OWNER_SAID_JOURNAL.md", "%!_RULES!_JOURNAL.md")).fetchall()]
+            paths = [r[0] for r in c.execute("SELECT DISTINCT path FROM journals WHERE name IN (?, ?) OR name LIKE ? ESCAPE '!'", ("OWNER_SAID_JOURNAL.md", "RULES_JOURNAL.md", "%!_RULES!_JOURNAL.md")).fetchall()]
         finally:
             c.close()
     except Exception:
@@ -2596,7 +2596,7 @@ def _intent_map(intent: str, scope: dict = None) -> str:
             continue
         if not tot or got / tot < 0.6 or shown >= 3:
             continue
-        if m.get("name") == "OWNER_SAID_JOURNAL.md" or str(m.get("name")).endswith("_RULES_JOURNAL.md"):   # scored below
+        if m.get("name") == "OWNER_SAID_JOURNAL.md" or str(m.get("name")).endswith("RULES_JOURNAL.md"):   # scored below
             continue
         if not in_scope(m.get("path", "")):
             continue
@@ -2774,9 +2774,13 @@ def _drop_negated_names(q: str) -> str:
 OUTPUT_CONTEXT_FLOOR = float(os.environ.get("JOURNAL_OUTPUT_CONTEXT_FLOOR") or 0.42)
 
 
-def _prompt_meaning(q: str, k: int = 8):
-    """(hits above the floor, journals of those hits) for an owner message; journals is None when the meaning
-    service did not answer, so callers fall back to the word rules instead of going silent."""
+def _prompt_meaning(q: str, k: int = 8, judged: bool = False):
+    """(hits, journals of the hits above the floor) for an owner message; journals is None when the meaning service
+    did not answer, so callers fall back to the word rules instead of going silent.
+    judged: a judge reads the hits next, so they come in the service's own order (meaning and words fused) with no
+    cosine floor. 2026-11-04: "pero de sam carter ... el mail ... los blueprints" found SAM CARTER PART 2 first
+    (meaning + words) at cosine 0.576 and the main Sam entry by words only; the 0.58 floor dropped both, kept two
+    unrelated entries at 0.60, the judge threw those out and the owner's message got no map at all."""
     try:
         import meaning
         raw = meaning.query(q, k=k, min_score=0.0)
@@ -2784,9 +2788,9 @@ def _prompt_meaning(q: str, k: int = 8):
         return [], None
     if not raw:
         return [], None
-    hits = sorted((h for h in raw if float(h.get("score", 0)) >= PROMPT_MEANING_FLOOR),
-                  key=lambda h: -float(h.get("score", 0)))
-    return hits, {h["journal"] for h in hits}
+    above = [h for h in raw if float(h.get("score", 0)) >= PROMPT_MEANING_FLOOR]
+    hits = list(raw) if judged else sorted(above, key=lambda h: -float(h.get("score", 0)))
+    return hits, {h["journal"] for h in above}
 
 
 def rows_cache_path() -> Path:
@@ -3060,6 +3064,15 @@ def _owner_brief_block(seen: dict, n: int, msg: str, names: set, shown: str = ""
     return "\n\n".join(out)
 
 
+# Claude Code shows the reply BEFORE the Stop hook runs, so a "rewrite the reply" send-back made the owner read the
+# whole answer twice with one line changed (owner 2026-11-05: "fix the mod, why does it make you repeat answers").
+# The send-back asks only for the correction of the wrong sentences.
+FIX_ONLY = ("The owner has ALREADY read your reply. Open those entries first. Then write ONLY a short correction, in the "
+            "owner's language: one or two plain lines per wrong sentence saying what is right instead (and, for a "
+            "proposal, what you will do instead or that nothing new is proposed). Do NOT repeat or rewrite the rest of "
+            "the reply. Do not mention this check.")
+
+
 def stop_check(call: dict) -> None:
     """The finished reply against the owner brief of the projects in play, before the turn ends (owner 2026-11-03:
     the reply check rode into the NEXT turn, after the owner had already read the repeated proposal)."""
@@ -3071,49 +3084,221 @@ def stop_check(call: dict) -> None:
         return
     import owner_brief
     _, seen = _quick_seen(call.get("session_id", ""))
-    why = owner_brief.stop_check(reply, _projects_in_play(seen)) or tool_claims_check(reply)
+    # both checks at once: one after the other they could pass the mod's time limit and say nothing
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(2) as pool:
+        a = pool.submit(owner_brief.stop_check, reply, _projects_in_play(seen))
+        b = pool.submit(said_check, reply, str(seen.get("last_msg") or ""), seen.get("msgs") or None)
+        why = a.result() or b.result()
     if why:
+        # every send-back is kept, so the owner can judge the check by its record (right stops, false stops)
+        try:
+            log = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "reply_gate_log.jsonl"
+            with log.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                     "session": call.get("session_id", ""), "owner_msg": str(seen.get("last_msg") or "")[:300],
+                                     "reply": reply[:600], "why": why[:1500],
+                                     "verdict": "unchecked" if why.startswith("NOT CHECKED") else ""}, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         print(json.dumps({"hookSpecificOutput": {"block": why}}, ensure_ascii=False))
 
 
-_CLAIMS_TASK = """The Reply below talks about some of our tools. Each Sheet says how that tool works today.
-List only the statements in the Reply that CONTRADICT a Sheet (the Reply says the tool works one way, the Sheet says
-another). A statement the Sheet does not cover is fine. Quote the Reply's exact words.
-
+# ONE check of what the reply proposes and states, against every journal, before the owner reads it. Owner 2026-11-03
+# (furious, after 10 days of per-case patches): the reply offered to "check Adscope winners first" for an offer that was
+# built FROM Adscope winners on 11-01; the 10-26 reply check is word-based (_PROPOSES, verdict words), missed the
+# Spanish wording and rode into the next turn. Here the judge reads the reply in any language, every item is searched
+# by meaning across all journals (not only the ones read), tool sheets join the evidence, and the judge decides.
+_ITEMS_TASK = """From the Reply of an AI assistant to a project owner, list what it PROPOSES or says it will do next,
+and what it STATES as fact about the state of the owner's projects or tools (done or not done, how something works,
+numbers). At most 5, the most important. For each give an English search query of 3 to 8 words.
 Reply:
 {reply}
+Answer only JSON: {{"items": [{{"quote": "<exact words from the Reply>", "kind": "proposal|claim", "query": "<words>"}}]}}"""
 
-Sheets:
-{sheets}
+_SAID_TASK = """You check an AI assistant's reply to a project owner BEFORE the owner reads it. For each Item, the Evidence
+holds journal entries found for it (newest word wins) and tool sheets. An Item is WRONG when the evidence shows
+that: (a) a proposed step was already done (research already run on the same market or for the same offer, even if the offer changed a little since; a thing already built or published), or (b) it was
+already decided another way, or rejected, or (c) a claim states something the evidence says is different, or states as
+proven what the evidence calls unverified, or (d) the reply says a capability is missing, has no tool, is only used
+hidden, or proposes adding or building it as new work ("step one: put X in"), while an "already exists" line shows it
+built and working (unless newer evidence says it was removed); the open item may be a different, narrower one. Lines marked "owner said" are the owner's own earlier chat messages (any
+language): they show (b) only when he clearly asked for or rejected that same thing and no newer evidence says otherwise.
+An Item the owner's latest message asks for is never wrong. Evidence that
+only talks about the same topic, without showing (a), (b) or (c), is NOT enough.
 
-Answer only JSON: {{"wrong": [{{"tool": "<name>", "quote": "<exact words from the Reply>", "sheet_says": "<short>"}}]}}"""
+The owner's messages in this session, oldest first (the last is his latest; read it in the light of the earlier ones):
+{last}
+
+Items and evidence:
+{items}
+
+For each wrong item also name the piece of work the evidence is about in 3 to 8 neutral words (what it is, not its
+state: "Spring sale landing page", not "shipped page").
+Answer only JSON: {{"wrong": [{{"item": <number>, "piece": "<neutral words>", "why": "<short, plain>", "evidence": "<journal:line>"}}]}}"""
 
 
-def tool_claims_check(reply: str) -> str:
-    """'' when the reply says nothing about our tools that their sheets contradict; else the text that sends it back.
-    Owner 2026-11-03: "it publishes through the API, why do you invent" (the reply said Social Engine posts through
-    the browser; its sheet says the official APIs)."""
+EXISTS_FLOOR = 0.5   # meaning score of an "Already exists" line that is about the claim
+
+
+def _exists_lines(q: str, limit: int = 3) -> list:
+    """The "Already exists" capability lines of every journal that the claim is about, by meaning (2026-11-05: a reply
+    said the After Effects clone "has no tool" and pitched adding it as step one; MEDIA_HUB's capability lines say
+    Video Studio renders through it since 2026-10-26, and only the tools on the OUR_TOOLS list got their sheet).
+    Never raises."""
+    try:
+        import meaning
+        from server import _match_capabilities, latest_word
+        cards = _match_capabilities(q, limit=20, min_cover=1)
+        if not cards:
+            return []
+        sc = meaning.score(q[:600], [f"{c.get('what', '')} {str(c.get('how', ''))[:200]}"[:500] for c in cards])
+        if not sc or len(sc) != len(cards):
+            return []
+        out = []
+        for i in sorted(range(len(cards)), key=lambda k: -sc[k])[:limit]:
+            if sc[i] < EXISTS_FLOOR:
+                break
+            c = cards[i]
+            line = (f"  [already exists, {c.get('journal', '')}] {str(c.get('what', ''))[:220]}"
+                    + (f" | status: {str(c['status'])[:100]}" if c.get("status") else "")
+                    + (f" | how: {str(c.get('how', ''))[:150]}" if c.get("how") else ""))
+            try:
+                lw = latest_word(c, use_meaning=False)
+            except Exception:
+                lw = None
+            if lw:
+                line += f" | newest word {lw['when']} ({c.get('journal', '')}:{lw['line']}): {lw['entry'][:120]}"
+            out.append(line)
+        return out
+    except Exception:
+        return []
+
+
+def _entry_text(path: str, line: int, n: int = 12, _cache: dict = {}) -> str:
+    """The entry's first lines; each journal is read once per process (a 25,000-line journal read per hit made the
+    check take 31 s)."""
+    try:
+        if path not in _cache:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                _cache[path] = f.read().splitlines()
+        rows = _cache[path][max(0, line - 1):line - 1 + n]
+        return re.sub(r"\s+", " ", " ".join(rows))[:650]
+    except Exception:
+        return ""
+
+
+def _unchecked(reply: str, last_msg: str, why: str) -> str:
+    """The memory could not be asked: the reply goes back once with that said plainly, never passes as checked
+    (stop_check logs it with verdict "unchecked")."""
+    return ("NOT CHECKED: the journals' memory search did not answer (" + why + "), so what this reply states and "
+            "proposes was not checked against the journals. For every statement about how something works, what was "
+            "done or what state something is in, run journal_search or read the journal. If one was wrong or "
+            "unverified, " + FIX_ONLY[FIX_ONLY.index("write ONLY"):] + " If all hold, write nothing more.")
+
+
+def said_check(reply: str, last_msg: str = "", msgs: list | None = None) -> str:
+    """'' when the reply is fine; else the text that sends it back for a rewrite, with the entries that show it.
+    msgs: the owner's messages of this session, oldest first ([local time, text])."""
     try:
         import judge
-        sheets = [(lbl, _tool_sheet(lbl)) for lbl in _named_tools(reply)]
-        sheets = [(lbl, s) for lbl, s in sheets if s]
-        if not sheets or not judge.available():
+        import meaning
+        if not judge.available():
             return ""
-        out = judge._run(_CLAIMS_TASK.format(reply=reply[:8000], sheets="\n".join(f"- {l}: {s}" for l, s in sheets)),
-                         model=judge.STRONG)
-        m = re.search(r"\{.*\}", out, re.S)
-        wrong = (json.loads(m.group(0)).get("wrong") or []) if m else []
+        m = re.search(r"\{.*\}", judge._run(_ITEMS_TASK.format(reply=reply[:6000])), re.S)
+        items = (json.loads(m.group(0)).get("items") or [])[:5] if m else []
+        items = [i for i in items if len(str(i.get("quote") or "")) >= 8]
+        if not items:
+            return ""
+        # Every search at once, each with a retry, and a search that did not answer is NOT "nothing found" (2026-11-04:
+        # all 5 searches timed out at 2.5 s, came back empty, the judge saw "(no evidence)" and a false claim about how
+        # the mod works passed; the same reply two minutes later was caught on all 4 claims).
+        # the whole reply searched once: what it is ABOUT (an item alone, "review Adscope winners", found Adscope cards
+        # but not the 11-01 entry saying the memory offer was already built from those winners)
+        asks = [{"q": reply[:1200], "k": 6}]
+        for it in items:
+            q = str(it.get("query") or it["quote"])[:300]
+            asks += [{"q": q, "k": 6}, {"q": q, "k": 3, "path": meaning.VOICE}]
+        try:
+            found = meaning.query_many_strict(asks)
+        except meaning.Down:
+            return _unchecked(reply, last_msg, f"the {len(asks)} memory searches did not answer")
+
+        def txt(h, n=12):
+            return f"{_entry_text(str(h.get('path') or ''), int(h.get('line') or 0), n=n)}"
+
+        def tag(h):
+            # each line with the date it was written: newest word wins only when the judge can see which is newer
+            import newest
+            when = newest.date_at(str(h.get('path') or ''), int(h.get('line') or 0))
+            return f"{h.get('journal')}:{h.get('line')}" + (f", {when}" if when else "")
+        ctx = [f"  [{tag(h)}] {txt(h)}" for h in (found[0] or [])[:5]]
+        blocks = ["0. Evidence for the whole reply (applies to every item):\n" +
+                  ("\n".join(ctx) or ("  (the search did not answer)" if found[0] is None else "  (none)"))]
+        for k, it in enumerate(items, 1):
+            ev = []
+            hits, voice = found[2 * k - 1], found[2 * k]
+            if hits is None:
+                ev.append("  (the search for this item did not answer: judge it only from the other evidence)")
+            for h in (hits or [])[:5]:
+                ev.append(f"  [{tag(h)}] {txt(h)}")
+            for lbl in _named_tools(it["quote"]):
+                s = _tool_sheet(lbl)
+                if s:
+                    ev.append(f"  [sheet {lbl}] {s}")
+            ev += _exists_lines(f'{it["quote"]} {it.get("query") or ""}'[:400])
+            for h in voice or []:
+                ev.append(f"  [owner said, {h.get('journal')}:{h.get('line')}] {txt(h, 4)}")
+            blocks.append(f"{k}. ({it.get('kind')}) \"{it['quote']}\"\n" + ("\n".join(ev) or "  (no evidence)"))
+        import newest
+        prompt = _SAID_TASK.format(last=newest.owner_messages(msgs)[-2400:] or last_msg[:1500] or "(unknown)",
+                                   items="\n\n".join(blocks))
+
+        def one(_):
+            try:
+                # thinking on for this verdict only: with the lean judge prompt and no thinking it missed the Adscope
+                # repeat 4 of 4 (2026-11-03)
+                mm = re.search(r"\{.*\}", judge._run(prompt, model=judge.VERDICT, think=True), re.S)
+                return (json.loads(mm.group(0)).get("wrong") or []) if mm else []
+            except Exception:
+                return []
+        # two verdicts at once, either one counts: one verdict caught the Adscope repeat 2 runs in 3 (2026-11-03)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(2) as pool:
+            runs = list(pool.map(one, range(2)))
+        wrong, seen_items = [], set()
+        for w in runs[0] + runs[1]:
+            if w.get("item") not in seen_items:
+                seen_items.add(w.get("item"))
+                wrong.append(w)
+        if wrong:
+            # newest word wins before a send-back (2026-11-05: "Sound Demo: recording again" was called wrong on the
+            # 10-31 "shipped" entry of the OLD demo; the 11-05 redo entry reopened it)
+            def quote(w):
+                try:
+                    return items[int(w.get("item")) - 1]["quote"]
+                except Exception:
+                    return ""
+            keep = newest.recheck([{"text": f'The reply says "{quote(w)}"; the check calls it wrong: {w.get("why")}',
+                                    "ref": w.get("evidence"), "piece": w.get("piece"), "subject": quote(w)} for w in wrong],
+                                  "an AI assistant's reply to the owner, about to be sent back as wrong",
+                                  msgs or ([["", last_msg]] if last_msg else []))
+            wrong = [w for i, w in enumerate(wrong) if i in keep]
     except Exception:
         return ""
     body = re.sub(r"\s+", " ", reply.lower())
-    bad = [w for w in wrong if len(str(w.get("quote") or "")) >= 12
-           and re.sub(r"\s+", " ", str(w["quote"]).lower()) in body]
+    bad = []
+    for w in wrong:
+        try:
+            it = items[int(w.get("item")) - 1]
+        except Exception:
+            continue
+        if re.sub(r"\s+", " ", str(it["quote"]).lower()) in body:
+            bad.append(f'- your words "{it["quote"]}": {w.get("why")} ({w.get("evidence")})')
     if not bad:
         return ""
-    return ("TOOL CHECK, BEFORE THE OWNER READS YOUR REPLY: it says something about our tools that their own sheet "
-            "contradicts:\n" + "\n".join(f'- {w.get("tool")}: your words "{w.get("quote")}"; the sheet says '
-                                          f'{w.get("sheet_says")}' for w in bad)
-            + "\nRewrite those sentences from the sheet (or read the tool's journal first). Do not mention this check.")
+    return ("CHECK OF THE REPLY YOU JUST GAVE: the journals show these were already done, decided, rejected or "
+            "are not true:\n" + "\n".join(bad) + "\n" + FIX_ONLY)
 
 
 def quick_hook(call: dict, prompt: bool = False):
@@ -3140,10 +3325,23 @@ def quick_hook(call: dict, prompt: bool = False):
         raw = re.sub(r"[A-Za-z]:[\\/][^\n\"'`|<>]*?\.\w{1,5}\b", " ", raw)
         text = _to_english(re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw))
         q_msg = re.sub(r"\S*(?:[\\/]|~\d)\S*", " ", raw).strip()
+        # the end-of-turn check needs what the owner just asked (an action he asked for is never a "repeat")
+        seen["last_msg"] = q_msg[:1500]
+        # and the session's earlier ones: a short, typo-heavy message is read in their light (2026-11-05)
+        try:
+            import newest
+            newest.remember_msg(seen, q_msg)
+        except Exception:
+            pass
         # A name the owner says he does NOT want ("no que muestre Oddsboard") is taken out before the meaning search,
         # or the search goes straight to it (2026-11-03 replay: four Oddsboard entries at 0.61-0.65).
         q_mean = _drop_negated_names(q_msg)
-        m_hits, m_js = _prompt_meaning(q_mean) if len(re.findall(r"\w+", q_mean)) >= 3 else ([], None)
+        try:
+            import judge as _jg
+            _judged = _jg.available()
+        except Exception:
+            _judged = False
+        m_hits, m_js = _prompt_meaning(q_mean, judged=_judged) if len(re.findall(r"\w+", q_mean)) >= 3 else ([], None)
         words = {_fold(w).strip("._-") for w in re.findall(r"[A-Za-zÀ-ÿ0-9_.-]{3,}", text)}   # "capaz." is "capaz"
         keys, vocab = _map_keys(), _prompt_vocab()
         _write_rows_cache()
@@ -3303,7 +3501,7 @@ def quick_hook(call: dict, prompt: bool = False):
         # A Brain map piece names its journal ("oddsboard" -> "Read first: .../FORECAST_MARKETS_JOURNAL.md").
         for rf in re.findall(r"Read first: ([^\n]+)", "\n".join(maps)):
             word_js |= set(re.findall(r"[\w.-]+_JOURNAL[\w.-]*\.md", rf)[:1])
-        mh = [h for h in m_hits if f"{h['journal']}:{h['line']}" not in skip][:4]
+        mh = [h for h in m_hits if f"{h['journal']}:{h['line']}" not in skip][:6]
         if mh:
             # Similarity puts noise and topic in the same band (an angry "ya te dije" matched a Dreamfield loop entry
             # at 0.62, 2026-11-03): the judge keeps only the entries really about the message.
@@ -3358,16 +3556,19 @@ def quick_hook(call: dict, prompt: bool = False):
                 # A newer entry says this piece was replaced or redesigned: shown FIRST and stopped once (the same
                 # file passes on retry), before any other map of it.
                 seen[rk] = time.time()
-                deny.append(newer_text(nb, Path(tg.replace("\\", "/")).name)
-                            + "\n(Stopped once: the same file passes on retry, once you checked which file serves the piece now.)")
+                if os.environ.get("JOURNAL_AI_CHECKS", "off").lower() in ("risky", "all"):
+                    deny.append(newer_text(nb, Path(tg.replace("\\", "/")).name)
+                                + "\n(Stopped once: the same file passes on retry, once you checked which file serves the piece now.)")
+                else:  # a note first in the map, not a stop (2026-11-06: it stopped edits of the live file itself)
+                    notes.insert(0, newer_text(nb, Path(tg.replace("\\", "/")).name))
                 continue
             own_journal = any(t in _name_words(j["journal"]) for j in m.get("journals", []) for t in m.get("terms", []))
             if not quick_map_text(m) or not (m.get("pieces") or own_journal):
                 continue  # loose word matches are noise, and noise teaches everyone to skip the map
             m = quick_map(tg, limit=3)  # a mapped file: now the cards
             text = quick_map_text(m)
-            # The gate: a mapped piece stays closed until its journal was really read (quick_hook.gate), a plain
-            # retry is denied again (2026-10-24: "stopped once" let a retry through without reading anything).
+            # The gate (quick_hook.gate): the first touch of a mapped piece carries its journal brief and goes
+            # through; only when no brief can be read from the file does it stay closed until the journal was read.
             stops, first = [], False
             for o in m.get("pieces", []):
                 js = _PIECE_JOURNALS.findall(o.get("path") or "") or [j["journal"] for j in m.get("journals", [])[:1]]
@@ -3377,7 +3578,7 @@ def quick_hook(call: dict, prompt: bool = False):
                 if state == "deny":
                     stops.append(msg)
                     first = first or not isinstance(was, dict)
-                elif state == "escape":
+                elif state in ("escape", "deliver"):
                     notes.append(msg)
             # The same piece reached through another file or command (quickmap.py, quick_hook.py, a git commit of
             # both) got its full map again on every call (2026-10-30: the journal-tool map 3 times in one turn).
@@ -3402,7 +3603,11 @@ def quick_hook(call: dict, prompt: bool = False):
             except Exception:
                 scope = {}
             im = _intent_map(intent, scope=scope)
-            if im and ("OWNER RULE:" in im or "DECIDED:" in im) and _intent_stops_fresh(im, seen):
+            # With per-call AI checks off (JOURNAL_AI_CHECKS, default off since 2026-11-06) this map is a note, not a
+            # stop: matched by meaning, it stopped many calls with entries about something else, and each false stop
+            # cost the session a whole turn (owner: "the cheapest possible", stops only for real danger).
+            strict = os.environ.get("JOURNAL_AI_CHECKS", "off").lower() in ("risky", "all")
+            if im and strict and ("OWNER RULE:" in im or "DECIDED:" in im) and _intent_stops_fresh(im, seen):
                 # Stop ONCE, before acting: the map shown after the call came too late (the duplicate order was
                 # already filed). The same intent passes on retry, once it has been seen.
                 deny.append(im)

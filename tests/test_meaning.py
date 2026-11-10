@@ -60,7 +60,7 @@ ENTRIES = [
      "Calmline lifetime $97 -> no: Calmline year $49 -> no: Calmline month $20."),
     ("SHOPSITE_FULL.md", 6121, "2026-10-27 18:08 [ship] CRAFT ENGINES CONNECTED",
      "shapesmith-cli release builds OK; the brands' studios call the craft engines (Shapesmith vector mandalas, "
-     "EffectCraft) from the box."),
+     "Fxmaker) from the box."),
     ("AA.md", 8456, "2026-10-30 13:19 [ship] CALMLINE $149 LIST + ETERNITY PACK CREDIT + NO 40% CODE INSIDE FUNNELS",
      "Calmline list price $149; the Eternity pack is taken off Calmline in the funnel ($82 / $88)."),
 ]
@@ -133,3 +133,21 @@ def test_second_embedder_waits(index):
         assert meaning.sync() == {"busy": True}
     finally:
         meaning._SYNC_LOCK.unlink()
+
+
+def test_strict_search_says_when_it_did_not_answer(monkeypatch):
+    """2026-11-04: a slow answer looked like "nothing found" and a check passed on it. query_strict retries once with
+    more time, then raises Down; query() keeps returning [] for maps and notes."""
+    monkeypatch.setattr(meaning, "OFF", False)
+    monkeypatch.setattr(meaning, "_start_service", lambda: None)
+    tries = []
+
+    def slow(url, timeout=0):
+        tries.append(timeout)
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(meaning.urllib.request, "urlopen", slow)
+    import pytest
+    with pytest.raises(meaning.Down):
+        meaning.query_strict("anything", timeout=1.0, retry_timeout=4.0)
+    assert tries == [1.0, 4.0]
+    assert meaning.query("anything") == []

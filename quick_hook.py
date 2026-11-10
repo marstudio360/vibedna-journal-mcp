@@ -11,13 +11,11 @@ Reads (Read, Grep, Glob, read-only commands, data queries) never load server.py:
 piece or a project folder with journals, in each user message, gets a short "read its journal first" note
 (2026-10-24: an answer about AA mails came from code reading alone and was wrong; reads never triggered anything).
 
-The gate (2026-10-24, owner: "the point of the mod is that you cannot skip it"): the first write of a mapped piece
-and the first read of a mapped piece or journal folder in a session stay DENIED until the session really read that
-piece's journal (journal_read, journal_read_section, journal_handoff_brief, journal_search, journal_quick, or a Read
-of the *_JOURNAL.md), in the current user message or after the stop. The mod reports each journal read after it ran
-(record_read, the PostToolUse side). A plain retry is denied again. Escape so it never deadlocks: on the 3rd attempt
-it opens with a loud note when the journal file is not on disk or a journal read failed since the stop (logged to
-gate_escapes.log). Reading journals is never gated.
+The gate: the first write of a mapped piece, and the first read of a mapped piece or journal folder in a session,
+carries that piece's JOURNAL BRIEF (its Handoff, Current state, Pending, Decided, Already exists and Rules sections and
+the newest entry headings, read straight from the file) and goes through; the brief counts as the session's read of
+that journal. Only when no journal file is on disk is the touch denied until the journal was read, with an escape on
+the 3rd attempt so it never deadlocks (logged to gate_escapes.log). Reading journals is never gated.
 """
 import json
 import posixpath
@@ -25,6 +23,104 @@ import re
 import sys
 
 WRITE_CMD = re.compile(r"(?<![\w./~\\-])(ssh|scp|rsync|sed\s+-i|tee|cp|mv|crontab|systemctl|git\s+push)(?![\w./\\-])|(?<![0-9&>])>{1,2}(?!&)\s*(?!/dev/null\b|\$null\b|nul\b)[^\s&|;]")
+
+# COST GATE (2026-11-06, owner: "the credits went very fast, measure the mod"): the AI command/MCP check ran on every
+# call, two strong verdicts each: 15,888 judge calls and ~US$698 API-equivalent on 2026-11-05, 15.7 h of waiting, all on
+# the owner's own account. The judge still decides what is right; this only decides when asking it is worth it: servers,
+# deletes, deploys, money, credentials, outward actions, a bare `python` (the Store alias that froze the PC). Everything
+# else keeps the free journal map. JOURNAL_ACTION_CHECK_ALL=on brings back the check on every call.
+RISKY_CMD = re.compile(
+    r"\b(ssh|scp|sftp|rsync|shred|taskkill|systemctl|crontab|schtasks|docker|kubectl|vercel|netlify|wrangler|stripe|"
+    r"solana|spl-token|shutdown|vault)\b|\bgit\s+(push|reset\s+--hard|clean|branch\s+-D|worktree\s+remove|filter-|rebase)"
+    r"|\brm\s|\brmdir\b|Remove-Item|Stop-Process|Restart-Computer|\bdel\s|\bmv\s|Move-Item|\bdeploy|npm\s+run\s+ship"
+    r"|curl[^|;\n]*(-X\s*(POST|PUT|PATCH|DELETE)|\s-d\s|--data|-F\s)|\bgh\s+(pr|release|repo|api|secret)"
+    r"|DROP\s+TABLE|DELETE\s+FROM|TRUNCATE|reg\s+(add|delete)|Set-ItemProperty"
+    r"|(^|[\s;&|(])(python3?|py)(\.exe)?\s"
+    r"|\b(sk|pk|rk)_(live|test)_|vcp_|ghp_|github_pat_|AKIA|xox[bp]-|eyJhbGci"
+    r"|(?<![0-9&>])>{1,2}\s*[^\s&|;]*(\.env|settings\.json|CLAUDE\.md)", re.I)
+RISKY_MCP = re.compile(
+    r"publish|post_|_post|send|reply|forward|delete|trash|wipe|share|upload|deploy|campaign|budget|click|fill|key_|"
+    r"navigate|eval_js|submit|tweet|tiktok|pinterest|engage|unfollow|dm_|apply|credential|rotated|update_file|create_file|"
+    r"spam|label|drip_(schedule|add|delete|edit|resume)|install|replay|swarm|worker|schedule|claim|set_|create_youtube|"
+    r"intercept|stealth|captcha|totp|import_profile", re.I)
+
+
+# Writes (same cost gate, 2026-11-06): every edit sent all the owner's rules (~5,600 tokens, never cached between
+# processes) to the judge, 7.8 s per edit measured. Text people read (docs, pages, copy, configs) keeps the full check;
+# code goes to the judge only when it carries what a rule is about: a long dash, a secret, a config or rules file.
+CODE_FILE = re.compile(r"\.(py|pyw|ts|tsx|js|jsx|mjs|cjs|go|rs|java|kt|swift|c|cc|cpp|h|cs|rb|php|sh|bash|ps1|sql|"
+                       r"css|scss|gd|lua|toml|ini|cfg|lock|test\.ts)$", re.I)
+RISKY_TEXT = re.compile(r"[\u2013\u2014]|\b(sk|pk|rk)_(live|test)_|vcp_|ghp_|github_pat_|AKIA|xox[bp]-|eyJhbGci|"
+                        r"-----BEGIN|password\s*=\s*['\"][^'\"]{6,}|(api|secret|token)_?key\s*=\s*['\"][^'\"]{12,}", re.I)
+RULES_FILE = re.compile(r"(^|[\\/])(CLAUDE\.md|AGENTS\.md|MEMORY\.md)$|settings(\.local)?\.json$|\.env|\.mcp\.json$", re.I)
+
+
+def _write_needs_judge(fp: str, text: str) -> bool:
+    if _check_all() or RULES_FILE.search(fp) or not CODE_FILE.search(fp):
+        return True
+    return bool(RISKY_TEXT.search(text))
+
+
+OVERRIDE = "<override>"
+
+
+def _compiled_stop(call: dict, text: str, on: str) -> str:
+    """The owner's mechanical rules as tests the judge wrote once (rulecompile.py): free, run on every command or
+    write. The same text again within 30 min passes (a test can be wrong; never a deadlock)."""
+    try:
+        sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0])
+        import rulecompile
+        hits = rulecompile.check(text, on, str((call.get("tool_input") or {}).get("file_path") or ""))
+    except Exception:
+        return ""
+    if not hits:
+        return ""
+    import hashlib
+    import time
+    f, seen = _state(call)
+    sig = hashlib.sha1((on + text).encode("utf-8", "replace")).hexdigest()[:16]
+    den = dict(seen.get("ctest_denied") or {})
+    if time.time() - float(den.get(sig, 0)) < 1800:
+        event("exact_override", on=on, rules=[d["where"] for d in hits[:3]])
+        return OVERRIDE  # the AI ran it again on purpose: the judge must not stop it a second time (2026-11-06)
+    den[sig] = time.time()
+    event("exact_stop", on=on, rules=[d["where"] for d in hits[:3]], text=text[:200])
+    seen["ctest_denied"] = dict(sorted(den.items(), key=lambda t: -t[1])[:100])
+    _save(f, seen)
+    what = "command" if on == "command" else "text"
+    return (f"STOPPED BY THE OWNER'S RULES (exact test, no AI): this {what} breaks:\n" +
+            "\n".join(f"- {d['say']} ({d['where']})" for d in hits[:3]) +
+            "\nDo it the right way above. (If the test is wrong, the same call passes if run again unchanged.)")
+
+
+def event(kind: str, **kw) -> None:
+    """One line per thing the mod did for the owner to measure (stops, overrides, briefs): mod_events.jsonl."""
+    try:
+        import time
+        from pathlib import Path
+        with (Path(_home()) / "mod_events.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": kind, **kw},
+                                ensure_ascii=False) + chr(10))
+    except Exception:
+        pass
+
+
+def _ai_mode() -> str:
+    """JOURNAL_AI_CHECKS: "off" (default), "risky" or "all": whether an AI judge reads each command, MCP call and
+    written text before it runs. Off since 2026-11-06 (owner: "the cheapest possible"): measured, the per-call judge
+    cost ~US$20/h with five tabs and most of its stops were false, each one costing the tab a whole extra turn. What
+    stays on with no AI: the journal briefs, the owner's exact rule tests; with AI, once per turn, the reply check."""
+    import os
+    if os.environ.get("JOURNAL_ACTION_CHECK_ALL", "").lower() in ("on", "1", "true", "yes"):
+        return "all"
+    m = os.environ.get("JOURNAL_AI_CHECKS", "off").lower()
+    return m if m in ("off", "risky", "all") else "off"
+
+
+def _check_all() -> bool:
+    import os
+    return os.environ.get("JOURNAL_ACTION_CHECK_ALL", "").lower() in ("on", "1", "true", "yes")
+
 
 READ_TOOLS = {"Read", "Grep", "Glob"}
 JOURNAL_MD = re.compile(r"journal[^\\/]*\.md$", re.I)
@@ -46,6 +142,7 @@ EXEMPT_PATH = re.compile(
 # "memory" asking to read reference_boltlab_infra_validator_journal.md before editing MEMORY.md.
 GATE_ESCAPE_AT = 3  # attempts: the 3rd opens the gate when a read is impossible (no journal file, or reads fail)
 READ_FRESH_S = 1800  # a journal read this recent opens its gate, whatever message it happened in
+MAP_AGAIN_S = 1800  # a file's map shown and passed this recently is not run again on the next edit of that file
 
 
 def _fold(w: str) -> str:
@@ -167,6 +264,31 @@ def record_read(call: dict):
     _save(f, seen)
 
 
+BRIEF_SECTIONS = re.compile(r"handoff|current state|pending|decided|already exists|rules|qu[eé] falta", re.I)
+BRIEF_MAX = 6000
+
+
+def brief(path: str) -> str:
+    """The parts of a journal a session must know before touching its piece (Handoff, current state, pending,
+    decided, already exists, rules) plus the newest entry headings, read straight from the file (no server, ~20 ms)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return ""
+    keep, latest, on = [], [], False
+    for ln in lines:
+        if ln.startswith("## "):
+            on = bool(BRIEF_SECTIONS.search(ln))
+            if re.match(r"## \d{4}-\d{2}-\d{2}", ln):
+                latest.append(ln[3:140])
+        if on and ln.strip():
+            keep.append(ln[:400])
+    text = "\n".join(keep)[:BRIEF_MAX]
+    tail = "\n".join(f"- {h}" for h in latest[-6:])
+    return text + (f"\n\nLATEST ENTRIES (newest last):\n{tail}" if tail else "")
+
+
 def gate(seen: dict, gkey: str, journals: list, files: list, what: str) -> tuple:
     """The journals gate for one piece or project: ("open", ""), ("deny", why) or ("escape", loud note).
     journals: its journal file names; files: their paths on disk (empty when unknown)."""
@@ -190,6 +312,17 @@ def gate(seen: dict, gkey: str, journals: list, files: list, what: str) -> tuple
         return "open", ""
     j0 = journals[0] if journals else ""
     on_disk = [p for p in files if p and os.path.isfile(p)]
+    # MEMORY DELIVERED, NOT A ROUND TRIP (owner 2026-11-06: the stop cost a whole extra turn every time, "the memory
+    # stays the same but it cannot weigh"): the journal's brief comes with the call and counts as its read.
+    b = brief(on_disk[0]) if on_disk else ""
+    if b:
+        for k in keys:
+            jr[k], jt[k] = n, now
+        seen["jr"], seen["jt"] = jr, jt
+        g[gkey] = "open"
+        event("brief", piece=what, journal=os.path.basename(on_disk[0]))
+        return "deliver", (f"JOURNAL BRIEF for {what} ({os.path.basename(on_disk[0])}), read it before acting; "
+                           f"open the full journal with journal_read_section if you need more:\n{b}")
     if not isinstance(st, dict):
         st = g[gkey] = {"at": time.time(), "tries": 0}
     st["tries"] += 1
@@ -363,6 +496,9 @@ def read_turn(call: dict):
         elif state == "escape":
             escapes.append(msg)
             seen[key] = n
+        elif state == "deliver":
+            notes.append(msg)
+            seen[key] = n
         elif fresh(key, journals):
             notes.append(note)
 
@@ -433,7 +569,9 @@ def _tools_first(call: dict):
     everything else on a call that writes code, runs a script or a remote command, or briefs an agent (2026-10-26:
     an Instagram carousel was posted by a loose Playwright script while the posting tool sat unused)."""
     import os
-    if call.get("tool_name") not in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Agent", "Task") \
+    # An edit to a file that exists is improving what is there, which is what this map asks for; a new file, a command
+    # or an agent brief is where a side way gets built (2026-11-06: the map's judge cost 1-4 s on every edit).
+    if call.get("tool_name") not in ("Write", "Bash", "PowerShell", "Agent", "Task") \
             or os.environ.get("JOURNAL_TOOLS_MAP") == "0":   # off switch
         return None
     try:
@@ -583,15 +721,115 @@ def _with_hint(call: dict):
         print(out)
 
 
+def _compile_later() -> None:
+    """A rules journal newer than the compiled tests: compile the new rules in the background (one file-date check per
+    owner message, nothing waits on it; a lock keeps it to one run)."""
+    import os
+    import subprocess
+    from pathlib import Path
+    home = Path(_home())
+    out, lock = home / "compiled_rules.json", home / "rulecompile.lock"
+    try:
+        if lock.exists() and time_now() - lock.stat().st_mtime < 900:
+            return
+        sys.path.insert(0, str(Path(__file__).parent))
+        import actioncheck
+        srcs = actioncheck._rule_files()
+        if not srcs:
+            return   # no rules journal and no JOURNAL_RULE_FILES: nothing to compile
+        import judge
+        if not judge.available():
+            return   # compiling is the judge's work: with the judge off nothing starts and nothing is spent
+        newest = max((p.stat().st_mtime for p in srcs if p.exists()), default=0)
+        if out.exists() and out.stat().st_mtime >= newest:
+            return
+        # The rules journals change all the time (new dated entries); only a change in the RULE LINES needs a compile.
+        # Hash the rule lines (a few ms) and start nothing when they are the same as last time (a compile on every
+        # journal touch froze the editor of a busy 16 GB computer).
+        import hashlib
+        h = hashlib.sha1("\n".join(sorted(r["text"] for r in actioncheck._rules())).encode("utf-8", "replace")).hexdigest()
+        hf = home / "rules_hash.txt"
+        if hf.exists() and hf.read_text(encoding="utf-8").strip() == h:
+            try:
+                os.utime(out)  # same rules: mark the compiled tests current so the date check above stays quiet
+            except OSError:
+                pass
+            return
+        hf.write_text(h, encoding="utf-8")
+        lock.write_text(str(time_now()))
+        here = Path(__file__).parent
+        # hidden console the children inherit (DETACHED_PROCESS opened a visible terminal per child) and the lowest
+        # priority, so the machine gives it only spare time
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | \
+            getattr(subprocess, "IDLE_PRIORITY_CLASS", 0)
+        subprocess.Popen(([] if os.name == "nt" else ["nice", "-n", "19"]) + [sys.executable, str(here / "rulecompile.py"), "build"],
+                         cwd=str(here), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                         creationflags=flags)
+    except Exception:
+        pass
+
+
+def time_now() -> float:
+    import time
+    return time.time()
+
+
 def main():
     raw = sys.stdin.read() or "{}"
     call = json.loads(raw)
+    # Light by design, so it can run on your own computer: it starts only when a rule LINE changed, at idle priority,
+    # and a compile with nothing new reads no repo and asks no judge.
+    # JOURNAL_AUTOCOMPILE=off turns it off.
+    import os
+    if "--prompt" in sys.argv and os.environ.get("JOURNAL_AUTOCOMPILE", "on").lower() not in ("off", "0", "false", "no"):
+        _compile_later()
     if "--prompt" in sys.argv and is_notification(call.get("prompt")):
         return
     if "--prompt" in sys.argv or "--reply" in sys.argv or "--output" in sys.argv or "--stop" in sys.argv:
         return _main(call)
     agent = call.get("tool_name") in ("Agent", "Task")
+    shell = call.get("tool_name") in ("Bash", "PowerShell")
+    cmd = str((call.get("tool_input") or {}).get("command") or "")
+    try:
+        sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0])
+        import cmdguard
+    except ImportError:  # a copy that has not received cmdguard.py yet (code_sync installs new files late) keeps working
+        cmdguard, shell = None, False
+    ti_m = call.get("tool_input") or {}
+    paid_text = cmd if shell else (f'{ti_m.get("mcp_tool", "")} {ti_m.get("args", "")}' if "mcp_tool" in ti_m else "")
+    if cmdguard and paid_text.strip():
+        paid = cmdguard._paid_re(_home())
+        if paid and paid.search(paid_text):
+            try:  # the owner's latest message, read only when a paid pattern matched
+                import quickmap
+                owner_msg = str((quickmap._quick_seen(call.get("session_id", ""))[1] or {}).get("last_msg") or "")
+            except Exception:
+                owner_msg = ""
+            why = cmdguard.money_guard(paid_text, owner_msg, _home())
+            if why:
+                event("money_stop", text=paid_text[:200])
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+                return
+    if shell:
+        why = cmdguard.box_flood(cmd, _home())
+        if why:
+            event("box_flood_stop")
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                     "permissionDecisionReason": why}}, ensure_ascii=False))
+            return
     tm = _tools_first(call)
+    if tm and tm.get("deny") and _ai_mode() == "off":
+        # decided by the cheap pick model: with AI checks off it is a note, never a stop (2026-11-06)
+        tm = {"note": tm["deny"]}
+    if shell:
+        f_r, seen_r = _state(call)
+        rem = cmdguard.reminder_note(cmd, seen_r)
+        if rem:
+            _save(f_r, seen_r)
+            event("reminder")
+            if not (tm and tm.get("deny")):
+                tm = {"note": rem + ("\n\n" + tm["note"] if tm and tm.get("note") else "")}
     if not tm and not agent:
         return _main(call)
     import io
@@ -622,6 +860,72 @@ def _main(call: dict):
         fp = str(ti.get("file_path") or ti.get("notebook_path") or "")
         if "journal_tool" in ti or "journal_read" in ti:
             return record_read(call)
+        if call.get("tool_name") in ("Bash", "PowerShell") and ti.get("command"):
+            why = _compiled_stop(call, str(ti.get("command")), "command")
+            if why == OVERRIDE:
+                return
+            if why:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+                return
+        if call.get("tool_name") in ("Write", "Edit", "MultiEdit", "NotebookEdit") and fp:
+            wtext = str(ti.get("content") or ti.get("new_string") or ti.get("new_source") or
+                        "\n".join(str(e.get("new_string") or "") for e in ti.get("edits") or []))
+            why = _compiled_stop(call, wtext, "write") if not JOURNAL_MD.search(fp) else ""
+            if why == OVERRIDE:
+                return
+            if why:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+                return
+        # Every command, before it runs, against how the journals say it is done (owner 2026-11-04: a bare GitHub fetch
+        # went down the read path below and the memory was never asked). actioncheck learns which commands no rule is about.
+        if call.get("tool_name") in ("Bash", "PowerShell") and ti.get("command") \
+                and (_ai_mode() == "all" or (_ai_mode() == "risky" and RISKY_CMD.search(str(ti.get("command"))))):
+            sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0])
+            import actioncheck
+            try:
+                import quickmap
+                _, seen_c = quickmap._quick_seen(call.get("session_id", ""))
+                last_c = str(seen_c.get("last_msg") or "")
+                msgs_c = seen_c.get("msgs") or None
+            except Exception:
+                last_c, msgs_c = "", None
+            why = actioncheck.check(str(ti.get("command")), str(ti.get("description") or ""), context=last_c, msgs=msgs_c)
+            if why:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+                return
+        # every MCP tool call (browser, posting, mail...), with the owner's latest message as its context (2026-11-04:
+        # a browser launch to look for a mail the journals already had read ran with no check at all)
+        if "mcp_tool" in ti:
+            if not (_ai_mode() == "all" or (_ai_mode() == "risky" and RISKY_MCP.search(str(ti.get("mcp_tool"))))):
+                return
+            sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0])
+            import actioncheck
+            try:
+                import quickmap
+                _, seen_q = quickmap._quick_seen(call.get("session_id", ""))
+                last = str(seen_q.get("last_msg") or "")
+                msgs_q = seen_q.get("msgs") or None
+            except Exception:
+                last, msgs_q = "", None
+            why = actioncheck.check_mcp(str(ti.get("mcp_tool")), str(ti.get("args") or ""), last, msgs=msgs_q)
+            if why:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+            return
+        # and every text written into a file (it replaced the loose secret_guard hook, owner 2026-11-04)
+        if call.get("tool_name") in ("Write", "Edit", "MultiEdit", "NotebookEdit") and fp:
+            sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else __file__.rsplit("\\", 1)[0])
+            import actioncheck
+            text = ti.get("content") or ti.get("new_string") or ti.get("new_source") or \
+                "\n".join(str(e.get("new_string") or "") for e in ti.get("edits") or [])
+            why = actioncheck.check_write(fp, str(text))                 if _ai_mode() == "all" or (_ai_mode() == "risky" and _write_needs_judge(fp, str(text))) else ""
+            if why:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                         "permissionDecisionReason": why}}, ensure_ascii=False))
+                return
         if call.get("tool_name") in READ_TOOLS or "paths" in ti or "query" in ti:
             if call.get("tool_name") == "Read" and JOURNAL_MD.search(fp):
                 h = hand_read_hint(call)  # reading a journal is never gated (the mod records it after it ran)
@@ -632,6 +936,12 @@ def _main(call: dict):
             return _with_hint(call)
         if fp:
             if JOURNAL_MD.search(fp):
+                return
+            # The map of a file was already shown and passed in this session: the next edits of it go straight
+            # (2026-11-06: the same 2.6-3.3 s map ran on every edit of one file). It comes back after MAP_AGAIN_S.
+            import time
+            f_m, seen_m = _state(call)
+            if time.time() - float((seen_m.get("mapped_files") or {}).get(fp, 0)) < MAP_AGAIN_S:
                 return
         elif call.get("tool_name") in ("Agent", "Task"):
             pass   # an agent brief gets the intent map (it went to read_turn before 2026-10-26 and never got one)
@@ -659,7 +969,23 @@ def _main(call: dict):
             seen["out_ids"] = sorted(shown | hit)[-300:]
             _save(f, seen)
         return
-    quickmap.quick_hook(call, prompt=prompt)
+    fp = str((call.get("tool_input") or {}).get("file_path") or "") if not prompt else ""
+    if not fp:
+        return quickmap.quick_hook(call, prompt=prompt)
+    import io
+    import time
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        quickmap.quick_hook(call, prompt=prompt)
+    out = buf.getvalue()
+    sys.stdout.write(out)
+    if '"deny"' not in out:   # only a map that let the edit through counts as shown; a stop must stay a stop
+        f_m, seen_m = _state(call)
+        m = dict(seen_m.get("mapped_files") or {})
+        m[fp] = time.time()
+        seen_m["mapped_files"] = dict(sorted(m.items(), key=lambda t: -t[1])[:200])
+        _save(f_m, seen_m)
 
 
 if __name__ == "__main__":

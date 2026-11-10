@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 PRODUCT_SLUG = "journal"
 
 
@@ -333,7 +333,7 @@ _JOURNAL_PATTERNS = [
     re.compile(r"journal\.md$", re.IGNORECASE),
 ]
 
-# "fixtures": test copies of real journals (tests/fixtures/shapesmith_20261028 held a 10-28 snapshot of CREATIVE_HUB
+# "fixtures": test copies of real journals (tests/fixtures/shapesmith_20261028 held a 10-28 snapshot of MEDIA_HUB
 # and SHOP_FULL) were indexed as live journals, 52 stale entries in every map and reply check (found 2026-10-29).
 _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", "_archive", "venv", ".venv", "dist", "build", "fixtures"}
 # Throwaway git worktrees of a project ("vibedna-site-wt-audio", "-wt-perf") hold stale copies of its journals: every
@@ -2785,7 +2785,7 @@ _SHIP_TAG = re.compile(r"^## (\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?\s*\[(?:sh
 
 
 def state_staleness(content: str, slack_days: int = 1) -> dict:
-    """2026-10-28: CREATIVE_HUB "Current state" said "State at 2026-10-25 ... Built? NOT built" while the same
+    """2026-10-28: MEDIA_HUB "Current state" said "State at 2026-10-25 ... Built? NOT built" while the same
     journal had [ship] entries of 2026-10-27, and journal_search told the session that Current state wins over
     entries. A Current state whose own date is older than the journal's newest [ship] entry by more than
     slack_days is marked stale. {"state_date", "ship_when", "ship_title"} or {}."""

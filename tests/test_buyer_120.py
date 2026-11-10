@@ -80,21 +80,18 @@ def test_quick_command_shows_the_piece_decided_and_pending():
     assert "SHOP_JOURNAL.md" in out, out
 
 
-def test_hook_process_stops_the_first_edit_until_the_journal_is_read():
+def test_hook_process_hands_the_journal_brief_with_the_first_edit():
+    # 1.5.0: the first edit of a mapped piece carries its journal's brief and goes through (1.2.0 to 1.4.0 stopped it
+    # until the journal was read, which cost a whole extra turn every time); the brief counts as the read
     call = {"session_id": "buyer-1", "reports_reads": True, "tool_name": "Edit",
             "tool_input": {"file_path": str(ROOT / "SHOP" / "payments.py"), "content": "x = 1\n"}}
     first = _run(["quick_hook.py"], json.dumps(call))
     out = json.loads(first.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "deny", out
-    assert "SHOP_JOURNAL" in out["permissionDecisionReason"]
-    again = json.loads(_run(["quick_hook.py"], json.dumps(call)).stdout)["hookSpecificOutput"]
-    assert again["permissionDecision"] == "deny"   # a plain retry does not pass
-    read = {"session_id": "buyer-1", "reports_reads": True, "tool_name": "mcp__journal__journal_handoff_brief",
-            "tool_input": {"journal_tool": "mcp__journal__journal_handoff_brief", "args": {"name_or_path": "SHOP_JOURNAL.md"},
-                           "text": "# SHOP JOURNAL\n...", "ok": True}}
-    _run(["quick_hook.py"], json.dumps(read))
+    assert "permissionDecision" not in out, out
+    assert "JOURNAL BRIEF" in out["additionalContext"] and "SHOP_JOURNAL" in out["additionalContext"]
+    assert "add the tax line to the receipt" in out["additionalContext"]
     after = _run(["quick_hook.py"], json.dumps(call)).stdout.strip()
-    assert '"deny"' not in after, after
+    assert '"deny"' not in after and "JOURNAL BRIEF" not in after, after
 
 
 def test_any_rules_journal_is_a_rules_source():

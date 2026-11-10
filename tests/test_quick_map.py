@@ -89,29 +89,18 @@ def _record(call: dict):
     quick_hook.record_read(call)
 
 
-def test_gate_stays_closed_until_the_journal_is_really_read():
+def test_first_touch_delivers_the_journal_brief_instead_of_a_stop():
+    """2026-11-06 (owner: the stop cost a whole extra turn every time, "the memory stays the same but it cannot
+    weigh"): the first touch of a mapped piece carries its journal's brief and goes through; it counts as the read."""
     _env()
-    """2026-10-24: the first touch was stopped once and a plain retry passed without reading anything."""
     _write("OPS/BILLING_JOURNAL.md", "# BILLING JOURNAL\n\n## Handoff for next session\n- [ ] retry failed invoices\n")
     _server._index_refresh_internal()
     call = {"session_id": "s1", "reports_reads": True, "tool_name": "Edit", "tool_input": {"file_path": "C:/code/billing.py"}}
-    first = _hook(call)
-    assert first["hookSpecificOutput"]["permissionDecision"] == "deny"
-    reason = first["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "Billing desk" in reason and "BILLING_JOURNAL" in reason and "owner" not in reason.lower()
-    assert 'journal_handoff_brief("BILLING_JOURNAL.md")' in reason
-    for attempt in (2, 3, 4):  # plain retries never open it, not even after the escape count
-        again = _hook(call)["hookSpecificOutput"]
-        assert again["permissionDecision"] == "deny" and f"attempt {attempt}" in again["permissionDecisionReason"]
-    # A journal tool call about ANOTHER journal does not count.
-    _record({"session_id": "s1", "reports_reads": True, "tool_input": {
-        "journal_tool": "mcp__journal__journal_handoff_brief", "args": {"name_or_path": "SHOP"}, "text": "# SHOP", "ok": True}})
-    assert _hook(call)["hookSpecificOutput"]["permissionDecision"] == "deny"
-    _record({"session_id": "s1", "reports_reads": True, "tool_input": {
-        "journal_tool": "mcp__journal__journal_handoff_brief", "args": {"name_or_path": "BILLING_JOURNAL.md"},
-        "text": "# BILLING JOURNAL\n...", "ok": True}})
-    assert _hook(call) == {}
-    assert _hook(call) == {}
+    first = _hook(call)["hookSpecificOutput"]
+    assert "permissionDecision" not in first
+    ctx = first["additionalContext"]
+    assert "Billing desk" in ctx and "JOURNAL BRIEF" in ctx and "retry failed invoices" in ctx
+    assert "JOURNAL BRIEF" not in json.dumps(_hook(call))  # delivered once: the next touch does not repeat it
 
 
 def test_a_piece_map_is_shown_once_per_session_across_its_files():
@@ -122,10 +111,7 @@ def test_a_piece_map_is_shown_once_per_session_across_its_files():
     _server._index_refresh_internal()
     sid = "s1piece"
     first = {"session_id": sid, "reports_reads": True, "tool_name": "Edit", "tool_input": {"file_path": "C:/code/billing.py"}}
-    assert _hook(first)["hookSpecificOutput"]["permissionDecision"] == "deny"
-    _record({"session_id": sid, "reports_reads": True, "tool_input": {
-        "journal_tool": "mcp__journal__journal_handoff_brief", "args": {"name_or_path": "BILLING_JOURNAL.md"},
-        "text": "# BILLING JOURNAL\n...", "ok": True}})
+    assert "JOURNAL BRIEF" in _hook(first)["hookSpecificOutput"]["additionalContext"]
     other = {"session_id": sid, "reports_reads": True, "tool_name": "Edit", "tool_input": {"file_path": "C:/code/invoice.py"}}
     out = _hook(other)
     assert "Billing desk" not in json.dumps(out), out
@@ -135,24 +121,18 @@ def test_a_piece_map_is_shown_once_per_session_across_its_files():
 
 
 def test_gate_opens_with_a_search_or_a_read_of_the_file():
+    """A search that found the journal, or a read of its file, opens the piece before any touch: no brief needed."""
     _env()
     _write("OPS/BILLING_JOURNAL.md", "# BILLING JOURNAL\n\n## Handoff for next session\n- [ ] retry failed invoices\n")
     _server._index_refresh_internal()
     call = {"session_id": "s1b", "reports_reads": True, "tool_name": "Edit", "tool_input": {"file_path": "C:/code/billing.py"}}
-    assert _hook(call)["hookSpecificOutput"]["permissionDecision"] == "deny"
-    # journal_quick's "latest" lines name other journals: they do not count as read.
-    _record({"session_id": "s1b", "reports_reads": True, "tool_input": {"journal_tool": "mcp__journal__journal_quick",
-             "args": {"query": "x"}, "ok": True, "text": json.dumps({"journals": [{"journal": "SHOP_JOURNAL.md"}],
-             "latest": [{"journal": "BILLING_JOURNAL.md"}]})}})
-    assert _hook(call)["hookSpecificOutput"]["permissionDecision"] == "deny"
     _record({"session_id": "s1b", "reports_reads": True, "tool_input": {"journal_tool": "mcp__journal__journal_search",
              "args": {"query": "invoices"}, "ok": True, "text": json.dumps({"matches": [{"name": "BILLING_JOURNAL.md"}]})}})
-    assert _hook(call) == {}
+    assert "JOURNAL BRIEF" not in json.dumps(_hook(call))
     c2 = {"session_id": "s1c", "reports_reads": True, "tool_name": "Edit", "tool_input": {"file_path": "C:/code/billing.py"}}
-    assert _hook(c2)["hookSpecificOutput"]["permissionDecision"] == "deny"
     _record({"session_id": "s1c", "reports_reads": True, "tool_name": "Read",
              "tool_input": {"journal_read": str(_ROOT / "OPS" / "BILLING_JOURNAL.md"), "ok": True}})
-    assert _hook(c2) == {}
+    assert "JOURNAL BRIEF" not in json.dumps(_hook(c2))
 
 
 def test_gate_escape_never_deadlocks():
@@ -286,8 +266,8 @@ def test_reads_carry_a_journal_note_once_per_user_message():
     # First read of the project in the session: the gate, then a plain retry is stopped again.
     read = {"session_id": sid, "cwd": cwd, **rr, "tool_name": "Read", "tool_input": {"file_path": "SHOP/site/worker.js"}}
     first = _proc(read)["hookSpecificOutput"]
-    assert first["permissionDecision"] == "deny" and "SHOP_JOURNAL.md" in first["permissionDecisionReason"]
-    assert "attempt 2" in _proc(read)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "permissionDecision" not in first and "SHOP_JOURNAL.md" in first["additionalContext"]
+    assert "JOURNAL BRIEF" in first["additionalContext"]  # other tests rewrite SHOP_JOURNAL.md: no content check
     # Reading the journal file itself is never gated (since 5fd26db it may carry the hand-read hint, never a deny);
     # once it ran (the mod reports it), the read passes.
     jr = _proc({**read, "tool_input": {"file_path": str(_ROOT / "SHOP" / "SHOP_JOURNAL.md")}})
@@ -303,6 +283,10 @@ def test_reads_carry_a_journal_note_once_per_user_message():
     again = _proc({"session_id": sid, "cwd": cwd, **rr, "tool_name": "Bash", "tool_input": {"command": "cat SHOP/site/worker.js"}})
     assert "permissionDecision" not in again["hookSpecificOutput"]
     assert "SHOP_JOURNAL.md" in again["hookSpecificOutput"]["additionalContext"]
+
+def teardown_function(_):
+    os.environ.pop("JOURNAL_AI_CHECKS", None)
+
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
@@ -585,6 +569,7 @@ def _tool(sid: str, desc: str, cmd: str, cwd: str = "") -> dict:
 def test_oddsboard_command_never_stops_on_another_products_card():
     """Case a, 2026-10-25: "Find real bot fills and payouts on 25/10" over the bulkbot log stopped on Growvine's
     onboarding card ("Find them for me ... fills itself") and listed MEMESNIPER and ebook entries."""
+    os.environ["JOURNAL_AI_CHECKS"] = "risky"  # the strict stop exists only with per-call checks on
     _scope_setup()
     h = _tool("s80", "Find real bot fills and payouts on 25/10",
               f"{_SSH} vpsone 'grep fill /opt/oddsboard-bot/data/bulkbot_real.log | tail -50'")
@@ -614,6 +599,8 @@ def test_box_script_belongs_to_the_project_it_reads():
     # A shared host alone names no project.
     assert srv._action_scope("Bash", {"command": f"{_SSH} gpubox uptime"}, "Check the box") == {}
     # A path under a journal root names its project folder, also written the Git Bash way ("/c/Users/...").
+    if sys.platform != "win32":
+        return   # the Git Bash form of a path exists only on Windows
     p = str(_ROOT).replace("\\", "/")
     gb = "/" + p[0].lower() + p[2:]
     s = srv._action_scope("Bash", {"command": f'cd "{gb}/PMK/tools" && python run.py > out.txt'}, "Run it")
@@ -623,6 +610,7 @@ def test_box_script_belongs_to_the_project_it_reads():
 def test_global_owner_rule_needs_three_specific_words_to_stop():
     """Case c: "Log the owner's correction to the debug journal" stopped on the owner's learning rule on 2 words
     (correction, journal). Without a project it is a note; a rule sharing 3+ specific words still stops."""
+    os.environ["JOURNAL_AI_CHECKS"] = "risky"  # the strict stop exists only with per-call checks on
     _scope_setup()
     h = _tool("s83", "Log the owner's correction to the debug journal",
               "echo '{\"m\": 1}' >> ~/.claude/debug-journal/journal.jsonl")
