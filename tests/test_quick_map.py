@@ -52,6 +52,18 @@ import server as _server  # noqa: E402
 import quickmap as srv  # noqa: E402
 srv._BRAND_NAMES |= {"tone garden", "launch desk", "forecast desk", "high tide", "mapleworks", "shopsite", "adshare", "growvine", "boltlab", "team hq", "ai team"}
 _server._index_refresh_internal()
+_QM_ENV = {k: os.environ[k] for k in ("JOURNAL_HOME", "JOURNAL_ROOTS", "JOURNAL_INCLUDE_VAULT_PATH")}
+
+
+@__import__("pytest").fixture(autouse=True, scope="module")
+def _own_state():
+    """Other test files run between this file's import and its tests: take back this file's env, index and Brain
+    map rows cache before the first test, so the result never depends on the order the files run in."""
+    os.environ.update(_QM_ENV)
+    srv._ROOT_NAMES = None
+    _server._index_refresh_internal()
+    srv._write_rows_cache()
+    yield
 
 
 def test_word_finds_written_owner_and_own_journal():
@@ -778,18 +790,18 @@ def test_journal_reads_count_with_every_argument_name_and_with_sed():
 
 
 def test_a_container_folder_journal_does_not_gate_another_tool_inside_it():
-    # 2026-10-27: running the gmail tool in TOOL SHOP/servers/gmail-mcp was stopped 6 times for the journal of the
+    # 2026-10-27: running the gmail tool in TOOL SHOP/servers/mail-tool was stopped 6 times for the journal of the
     # journal tool (JOURNAL_MCP_JOURNAL.md sits at the top of TOOL SHOP, a folder of dozens of tools).
     _env()
     _write("TOOLBOX/JOURNAL_MCP_JOURNAL.md", "# JOURNAL MCP JOURNAL\n\n## 2026-10-20 10:00 [ship] quick map\nx\n")
-    _write("TOOLBOX/servers/gmail-mcp/server.py", "# gmail\n")
+    _write("TOOLBOX/servers/mail-tool/server.py", "# gmail\n")
     _write("TOOLBOX/servers/journal-mcp/quickmap.py", "# map\n")
     import quick_hook
-    hit = quick_hook._journal_folder(str(_ROOT / "TOOLBOX/servers/gmail-mcp/server.py"), "")
-    assert hit and not quick_hook._folder_owns(hit, str(_ROOT / "TOOLBOX/servers/gmail-mcp/server.py"), "")
+    hit = quick_hook._journal_folder(str(_ROOT / "TOOLBOX/servers/mail-tool/server.py"), "")
+    assert hit and not quick_hook._folder_owns(hit, str(_ROOT / "TOOLBOX/servers/mail-tool/server.py"), "")
     assert quick_hook._folder_owns(hit, str(_ROOT / "TOOLBOX/servers/journal-mcp/quickmap.py"), "")
     out = _proc({"session_id": "box-gm", "tool_name": "Grep",
-                 "tool_input": {"paths": [str(_ROOT / "TOOLBOX/servers/gmail-mcp/server.py")]}})
+                 "tool_input": {"paths": [str(_ROOT / "TOOLBOX/servers/mail-tool/server.py")]}})
     assert out.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
 
 

@@ -84,13 +84,15 @@ def _approval():
 APPROVAL = _approval()
 
 
-def _paid_re(home: str):
-    """What spends money, one Python regex per line in $JOURNAL_HOME/paid_patterns.txt (none = no money guard)."""
+def _paid_re(home: str, gated: bool = True):
+    """What spends money, one Python regex per line in $JOURNAL_HOME/paid_patterns.txt (none = no money guard). With
+    gated (the hook's first look) it also matches the default rules pack's yes-gated commands (publish, spend, message),
+    so the latest message is read only for those."""
     try:
         pats = [p.strip() for p in (Path(home) / "paid_patterns.txt").read_text(encoding="utf-8").splitlines()
                 if p.strip() and not p.lstrip().startswith("#")]
     except OSError:
-        return None
+        pats = []
     good = []
     for p in pats:
         try:
@@ -98,7 +100,17 @@ def _paid_re(home: str):
             good.append(f"(?:{p})")
         except re.error:
             pass
-    return re.compile("|".join(good), re.I) if good else None
+    if gated:
+        try:
+            import default_rules
+            pre = default_rules.yes_prefilter()
+            if pre is not None:
+                good.append(f"(?:{pre.pattern})")
+        except Exception:
+            pass
+    if not good:
+        return None
+    return re.compile("|".join(good), re.I)
 
 
 READ_ONLY = re.compile(r"^(grep|egrep|fgrep|rg|sed|awk|cat|head|tail|less|more|wc|find|ls|tree|stat|file|diff|echo|printf|"
@@ -140,15 +152,26 @@ def _running_parts(cmd: str) -> str:
 def money_guard(text: str, owner_msg: str, home: str, shell: bool = True) -> str:
     """'' or the stop text. A paid run (a command or tool matching paid_patterns.txt) goes only with the owner's yes in
     their latest message; a plain retry does NOT pass."""
-    paid = _paid_re(home)
+    paid = _paid_re(home, gated=False)
     if not paid or not paid.search(_running_parts(text) if shell else text):
-        return ""
+        return _default_yes_gate(text, owner_msg) if shell else ""
     if APPROVAL.search(owner_msg or ""):
         return ""
     return ("STOPPED, PAID RUN (exact match, no AI): this spends money (it matches $JOURNAL_HOME/paid_patterns.txt). "
             "The rule: no paid run without showing the owner the estimated cost first and getting their yes. Tell "
             "them what it is, how many runs and the estimated cost in one short line, and run it only after they say "
             "yes in their next message. Running it again without that does not pass.")
+
+
+def _default_yes_gate(text: str, owner_msg: str) -> str:
+    """The default rules pack's publish, spend and message rules: same yes words as the paid run guard."""
+    if text.startswith("mcp__"):
+        return ""
+    try:
+        import default_rules
+        return default_rules.yes_gate(text, owner_msg, APPROVAL)
+    except Exception:
+        return ""
 
 
 def reminder_note(cmd: str, seen: dict) -> str:

@@ -1,0 +1,67 @@
+{
+  "description": "Journals DNA: the journal brief before an edit or command, the journal map on each prompt. Replace <PYTHON> and <JOURNAL_MCP_DIR> (see INSTALL.md).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "commandWindows": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "commandWindows": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "commandWindows": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "timeout": 45
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "commandWindows": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "commandWindows": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app codex",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

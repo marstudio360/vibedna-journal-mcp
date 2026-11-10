@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "\"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event SessionStart",
+        "powershell": "& \"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event SessionStart",
+        "timeoutSec": 30
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "bash": "\"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event UserPromptSubmit",
+        "powershell": "& \"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event UserPromptSubmit",
+        "timeoutSec": 30
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "bash": "\"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event PreToolUse",
+        "powershell": "& \"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event PreToolUse",
+        "timeoutSec": 45
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "bash": "\"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event PostToolUse",
+        "powershell": "& \"<PYTHON>\" \"<JOURNAL_MCP_DIR>/quick_hook.py\" --app copilot --event PostToolUse",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

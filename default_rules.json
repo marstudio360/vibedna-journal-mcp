@@ -1,0 +1,82 @@
+{
+ "version": "1.0.0",
+ "about": "Journals DNA default rules pack: exact tests, no AI, no setup. Read by default_rules.py. JOURNAL_DEFAULT_RULES=off turns the pack off; JOURNAL_DEFAULT_RULES_OFF=id,id turns single rules off.",
+ "rules": [
+  {"id": "secrets", "mode": "stop_once", "on": ["write", "command"],
+   "say": "Secret caught: {what} is written into {where} as plain text; keep it in an env var or a secrets manager and read it from there (os.environ, process.env). The same call again passes."},
+  {"id": "destructive_rm", "mode": "stop_once", "on": ["command"],
+   "say": "Destructive delete caught: {what} removes {where}, which cannot be undone; delete only the exact folder you mean (node_modules, dist, a temp file). The same call again passes."},
+  {"id": "git_discard", "mode": "stop_once", "on": ["command"],
+   "say": "Lost work caught: {what} throws away {where}; commit or stash it first (git stash). The same call again passes."},
+  {"id": "sql_destroy", "mode": "stop_once", "on": ["command"],
+   "say": "Data loss caught: {what} deletes {where} for good; add a WHERE, or back the data up first. The same call again passes."},
+  {"id": "force_push", "mode": "stop_once", "on": ["command"],
+   "say": "Force push to {where} caught: it rewrites the shared main branch and can erase other people's commits; push a branch and open a pull request instead. The same call again passes."},
+  {"id": "secret_files", "mode": "stop_once", "on": ["write", "command"],
+   "say": "Secrets file caught: {what} {where}, which holds keys that may exist nowhere else; back it up or change only the line you need. The same call again passes."},
+  {"id": "publish", "mode": "needs_yes", "on": ["command"],
+   "say": "Publish to production caught: {what} goes live for everyone. Ask the user first; it runs once they say yes in their next message."},
+  {"id": "spend", "mode": "needs_yes", "on": ["command"],
+   "say": "Spending caught: {what} can cost real money. Tell the user what it does and what it costs; it runs once they say yes in their next message."},
+  {"id": "message", "mode": "needs_yes", "on": ["command"],
+   "say": "Outgoing message caught: {what} sends something real people will see. Show the user the exact text; it runs once they say yes in their next message."},
+  {"id": "user_yes", "mode": "needs_yes", "on": ["command"],
+   "say": "Your own rule caught {what}: it is on your list of actions that need your yes (yes_patterns.txt). Ask the user first; it runs once they say yes in their next message."}
+ ],
+ "yes_words": ["yes", "yeah", "yep", "go ahead", "do it", "approved", "ship it", "publish it", "send it", "go for it", "confirmed", "proceed"],
+ "secret_formats": [
+  ["an Anthropic API key (sk-ant-...)", "(?<![\\w-])sk-ant-[A-Za-z0-9_-]{24,}"],
+  ["an OpenAI-style API key (sk-...)", "(?<![\\w-])sk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}"],
+  ["a Stripe live key (sk_live_ / rk_live_)", "(?<![\\w])[sr]k_live_[0-9A-Za-z]{20,}"],
+  ["a GitHub token (ghp_ / github_pat_)", "(?<![\\w])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})"],
+  ["an AWS access key (AKIA...)", "(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])"],
+  ["a Slack token (xox...-)", "(?<![\\w])xox[baprse]-[0-9A-Za-z-]{10,}"],
+  ["a Google API key (AIza...)", "(?<![\\w])AIza[0-9A-Za-z_-]{35}"],
+  ["an npm token (npm_...)", "(?<![\\w])npm_[A-Za-z0-9]{36}(?![A-Za-z0-9])"],
+  ["a private key block", "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\\s\\S]{0,300}?[A-Za-z0-9+/=]{40,}"]
+ ],
+ "placeholder_words": ["password", "xxx", "***", "...", "<", ">", "${", "{{", "%(", "$(", "your", "example", "placeholder", "changeme", "change_me", "replace", "dummy", "fake", "sample", "redacted", "todo", "insert", "here", "test", "mock", "foo", "process.env", "os.environ", "getenv", "env("],
+ "secret_keywords": "password|passwd|pwd|secret|client_?secret|api_?key|api_?secret|secret_?key|access_?token|auth_?token|refresh_?token|private_?key|token",
+ "env_files_ok": "^\\.env\\.(example|sample|template|dist|defaults)(\\.|$)|\\.example$|\\.sample$|\\.template$",
+ "secret_file_names": "^(?!.*\\.(?:new|bak|tmp|old|orig|backup|swp|save|prev)$)(\\.env|\\.env\\.[\\w.-]+|\\.dev\\.vars|credentials|credentials\\.json|id_rsa|id_ed25519|id_ecdsa|id_dsa|[\\w.-]+\\.pem|[\\w.-]+\\.key|[\\w.-]+\\.p12|[\\w.-]+\\.pfx)$",
+ "disposable_dirs": ["node_modules", "dist", "build", "out", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", ".vite", ".vercel", ".netlify", ".wrangler", ".expo", ".angular", ".docusaurus", "storybook-static", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", "coverage", ".coverage", "htmlcov", "target", ".gradle", "venv", ".venv", "env", ".cache", "cache", "tmp", "temp", "Temp", ".tmp", "logs", "log", ".eslintcache", "bower_components", ".terraform", "obj", "bin", "pkg", "lib-cov", ".sass-cache", ".serverless", "cdk.out", ".aws-sam", "test-results", "playwright-report", "screenshots", "artifacts", "release", "releases", "outputs", "output", ".ipynb_checkpoints", "wheels", ".eggs", "site-packages", "deps", "_build"],
+ "cache_parts": [".cache", ".npm", ".pnpm-store", ".yarn", "Caches", "Temp", "tmp", "temp", ".gradle", ".cargo", ".rustup", ".m2", "node_modules", "__pycache__", "AppData/Local/Temp"],
+ "project_containers": ["desktop", "documents", "projects", "project", "code", "dev", "development", "repos", "repositories", "src", "source", "workspace", "workspaces", "work", "git", "github", "developer", "sites", "apps"],
+ "db_clients": "\\b(?:psql|mysql|mariadb|sqlite3?|sqlcmd|duckdb|clickhouse(?:-client)?|cockroach\\s+sql|wrangler\\s+d1\\s+execute|turso\\s+db\\s+shell|supabase\\s+db\\s+(?:execute|query)|prisma\\s+db\\s+execute|bq\\s+query|snowsql|mongosh|neonctl)\\b|\\.(?:execute|executescript|exec|query|sql|raw)\\s*\\(|\\bcursor\\b",
+ "publish": [
+  ["vercel --prod", "^(?:vercel|vc)\\b(?!\\s+(?:ls|list|env|logs|inspect|domains|alias|pull|link|whoami|projects?|teams|dns|certs|login|logout|switch|bisect|git|help|init|dev|build|rm|remove)\\b)(?=.*\\s--prod(?:uction)?\\b)|^(?:vercel|vc)\\s+promote\\b"],
+  ["netlify deploy --prod", "^netlify\\s+deploy\\b(?=.*\\s--prod\\b)"],
+  ["npm publish", "^(?:npm|pnpm|yarn|bun)\\s+(?:npm\\s+)?publish\\b(?!.*--dry-run)"],
+  ["twine upload", "^(?:python3?\\s+-m\\s+)?twine\\s+upload\\b(?!.*(?:testpypi|test\\.pypi\\.org))"],
+  ["a package publish", "^(?:poetry|uv|flit|hatch)\\s+publish\\b(?!.*(?:--dry-run|testpypi))|^cargo\\s+publish\\b(?!.*--dry-run)|^gem\\s+push\\b"],
+  ["gh release create", "^gh\\s+release\\s+create\\b(?!.*--draft)"],
+  ["firebase deploy", "^firebase\\s+deploy\\b"],
+  ["fly deploy", "^(?:fly|flyctl)\\s+deploy\\b"],
+  ["git push to heroku", "^git\\s+push\\s+(?:-\\S+\\s+)*heroku\\b"]
+ ],
+ "spend_cli": [
+  ["a Stripe live charge", "^stripe\\s+(?:charges|payment_intents|payouts|transfers|subscriptions|invoices|checkout\\s+sessions)\\s+(?:create|pay|confirm|capture)\\b(?=.*(?:--live\\b|sk_live_|rk_live_))"],
+  ["a cloud VM or GPU create", "^gcloud\\s+(?:beta\\s+|alpha\\s+)?compute\\s+(?:instances|tpus(?:\\s+tpu-vm)?)\\s+create\\b|^gcloud\\s+container\\s+clusters\\s+create\\b|^aws\\s+ec2\\s+(?:run-instances|request-spot-instances)\\b|^az\\s+vm\\s+create\\b|^doctl\\s+compute\\s+droplet\\s+create\\b|^hcloud\\s+server\\s+create\\b|^linode-cli\\s+linodes\\s+create\\b|^vultr-cli\\s+instance\\s+create\\b|^runpodctl\\s+create\\s+pods?\\b|^vastai\\s+create\\s+instance\\b"]
+ ],
+ "spend_http": [
+  ["a POST to the Stripe API", "api\\.stripe\\.com", ""],
+  ["a Meta ads budget or activation change", "graph\\.facebook\\.com", "daily_budget|lifetime_budget|bid_amount|status[\"']?\\s*[:=]\\s*[\"']?ACTIVE"],
+  ["a Google Ads budget or activation change", "googleads\\.googleapis\\.com", "amountMicros|status[\"']?\\s*[:=]\\s*[\"']?ENABLED"]
+ ],
+ "message_cli": [
+  ["an email send", "^(?:sendmail|msmtp|ssmtp)\\b|^(?:mail|mailx|mutt)\\s+(?=.*(?:-s\\b|@))|^swaks\\b(?=.*--to\\b)|^send-mailmessage\\b"]
+ ],
+ "message_http": [
+  ["an email send (Resend)", "api\\.resend\\.com/emails", ""],
+  ["an email send (SendGrid)", "api\\.sendgrid\\.com/v3/mail/send", ""],
+  ["an email send (Postmark)", "api\\.postmarkapp\\.com/email", ""],
+  ["an email send (Mailgun)", "api\\.mailgun\\.net/v\\d/[^\\s/]+/messages", ""],
+  ["an email send (Brevo)", "api\\.brevo\\.com/v3/smtp/email|api\\.sendinblue\\.com/v3/smtp/email", ""],
+  ["a post or message on Facebook or Instagram", "graph\\.facebook\\.com/\\S*/(?:media_publish|feed|messages|comments|replies)\\b", ""],
+  ["a post on Threads", "graph\\.threads\\.net/\\S*/threads_publish", ""],
+  ["a post on X", "api\\.(?:twitter|x)\\.com/(?:2/tweets|1\\.1/statuses/update)", ""],
+  ["a post on LinkedIn", "api\\.linkedin\\.com/(?:v2/ugcPosts|rest/posts)", ""],
+  ["a TikTok post", "open\\.tiktokapis\\.com/v2/post/publish", ""],
+  ["an SMS (Twilio)", "api\\.twilio\\.com/\\S*/Messages", ""]
+ ]
+}

@@ -331,6 +331,12 @@ ADDRESS = re.compile(r"https?://\S+|[A-Za-z]:[\\/][^\s\"']*|(?<![\w.])\.?\.?/[\w
 
 
 def check(text: str, on: str, path: str = "") -> list[dict]:
+    # the default rules pack (default_rules.py, no AI, no setup) rides in the same list: one stop per call, same retry
+    try:
+        import default_rules
+        extra = default_rules.stop_once(text, on, path)
+    except Exception:
+        extra = []
     if on == "write":
         text = ADDRESS.sub(" ", text)
     out = []
@@ -344,7 +350,7 @@ def check(text: str, on: str, path: str = "") -> list[dict]:
             except re.error:
                 pass
         out.append(d)
-    return out
+    return out + extra
 
 
 if __name__ == "__main__":

@@ -8,11 +8,35 @@ share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
 
+## New in 1.6.0
+
+- **A rules pack that is on by default, with no setup and no AI cost.** It stops once (the same call again passes):
+  a secret written into a file or a commit, deletes that wipe a drive, your home or a whole project, losing unsaved
+  git work (`git reset --hard` and the like, only when there is work to lose), `DROP` / `TRUNCATE` / `DELETE`
+  without `WHERE`, a force push to main, overwriting your `.env` or key files. It waits for a yes in your latest
+  message before publishing to production, spending money, or messaging customers and posting. Settings:
+  `JOURNAL_DEFAULT_RULES=off`, `JOURNAL_DEFAULT_RULES_OFF=<rule,rule>`, `JOURNAL_MAIN_BRANCHES`, and your own
+  `~/.journal/yes_patterns.txt`.
+- **Three questions make it yours.** After the install your AI asks what costs you money, what must never go out
+  without your yes, and your production branch and deploy command, and writes the answers as exact patterns
+  (`starter_rules_interview.md`).
+- **The journal brief on the first touch of any file in a project that has a journal**, no Brain map needed: the
+  first folder above the file (up to your journal root) that holds 1 to 5 `*_JOURNAL.md` files is its project.
+- **A running service or timer is never taken as proof**: the mod shows its newest incident or pause entry and says
+  to check its log first.
+- **BETA adapters for Codex, GitHub Copilot and Cursor** (`mod-adapters/`): the same journal brief through each app's
+  hooks. Codex tested live; GitHub Copilot and Cursor tested with recorded hook payloads. In these apps the journals
+  gate only delivers the brief; the other stops stay stops.
+
 ## What it does, in plain words
 
-- **Journals your AI must read.** In Claude Code, the first time your AI touches a piece of your project, the
-  journals mod hands it that piece's journal brief with the call: the handoff, the current state, what is pending,
-  what was decided, what exists, the rules and the newest entries. No extra turn, no skipping it.
+- **Journals your AI must read.** In Claude Code, the first time your AI touches a file of a project that has a
+  journal (or a piece your Brain map names), the journals mod hands it that journal's brief with the call: the
+  handoff, the current state, what is pending, what was decided, what exists, the rules and the newest entries. No
+  extra turn, no skipping it. Codex, GitHub Copilot and Cursor get the same brief through BETA adapters.
+- **Safe by default.** A rules pack written by us, on with no setup: leaked keys, wiping deletes, lost git work,
+  destructive SQL, force push to main and overwritten `.env` files are stopped once; publishing, spending and
+  messaging customers wait for your yes. No AI involved, nothing to pay.
 - **A map before every change.** Before your AI edits a file, runs a command or briefs an agent, it sees a short map
   of that thing: which journal talks about it, who is working on it now, what was already decided, what already
   exists, the latest entries and what is still pending.
@@ -40,7 +64,7 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
   against your journals: when it proposes again what you rejected or already did, states what a journal contradicts,
   or calls missing something that already exists, your AI writes a short correction right away.
 - **Cheap by default.** No AI reads each command or edit unless you ask for it (`JOURNAL_AI_CHECKS`); the briefs,
-  your exact rule tests, the reminders, an optional guard against flooding a shared server and an optional guard
+  the default rules pack, your exact rule tests, the reminders, an optional guard against flooding a shared server and an optional guard
   that holds paid runs until you say yes cost nothing. The background rule compile is light: it starts only when a
   rule line changed, at the lowest priority.
 - **Old rules carry their newer word.** A rule or decision older than a week is shown with the newer entry that
@@ -58,6 +82,10 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
 | `quickmap.py`, `quick_hook.py` | The quick map and the checks the mod runs (local, no network; no AI unless you switch the judge on) |
 | `judge.py`, `owner_brief.py` | Optional: the judge (your `claude` command decides what is really relevant) and the owner brief of each project |
 | `rulecompile.py`, `cmdguard.py` | Your rules as exact tests and reminders (written once by the judge, run with no AI), the shared server flood guard and the paid-run guard |
+| `default_rules.py`, `default_rules.json` | The default rules pack: exact tests on by default, no AI, no setup |
+| `starter_rules_interview.md` | The three questions your AI asks once to add your own money, outward and deploy rules |
+| `nearestjournal.py`, `unitmap.py` | The journal of a file's own project folder, and the newest state entry of a service, timer or cron job |
+| `adapters/`, `mod-adapters/` | BETA: the same mod for Codex, GitHub Copilot and Cursor (one folder per app with its hooks file and INSTALL.md) |
 | `actioncheck.py`, `newest.py` | Optional AI check of each command, tool call and write (off by default), and "the newest word wins" before any stop |
 | `modreport.py` | What the mod did and what it cost, from its own logs |
 | `toolmap.py`, `tool_concepts.json` | "A tool already does this": matches an action to the tools and flows your journals list |
@@ -104,8 +132,8 @@ The dry run prints every change and writes nothing; the second command installs 
 restart Claude Code (close it and open a new session) and ask: `journal_quick("<a word from your project>")`.
 To undo it all: `install_mod.py --uninstall`.
 
-The mod works in Claude Code only. Other MCP clients (Cursor and others) can run `server.py` as a normal MCP server
-and get the 35 tools without the mod.
+The mod is made for Claude Code; Codex, GitHub Copilot and Cursor can use the BETA adapters in `mod-adapters/`.
+Other MCP clients can run `server.py` as a normal MCP server and get the 35 tools without the mod.
 
 ## The tools
 

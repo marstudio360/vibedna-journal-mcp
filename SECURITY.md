@@ -5,7 +5,9 @@ What Journals DNA touches, where data goes, and how to report a vulnerability.
 ## What it is
 
 A **local MCP server** (`server.py`, a Python stdio process started by your MCP client) plus, in Claude Code, the
-**journals mod** (a plugin whose hooks run `quick_hook.py` before and after tool calls). It opens no network listener
+**journals mod** (a plugin whose hooks run `quick_hook.py` before and after tool calls). The BETA adapters for
+Codex, GitHub Copilot and Cursor (`mod-adapters/`) run the same `quick_hook.py` from each app's own hooks file, which
+you copy in yourself. It opens no network listener
 unless you set `JOURNAL_TRANSPORT=http`, which is meant only for cloud hosting, or set up the optional search by
 meaning, whose service listens on `127.0.0.1` only.
 
@@ -22,16 +24,21 @@ meaning, whose service listens on `127.0.0.1` only.
 - Optional, only when you set them: the docs in `JOURNAL_TOOL_DOCS` / `JOURNAL_EXTRA_DOCS`, the names-only vault index
   in `JOURNAL_INCLUDE_VAULT_PATH` (names, categories and field names, never values), the rule files in
   `JOURNAL_RULE_FILES`, the server list in `~/.journal/box_hosts.txt` or `JOURNAL_BOX_HOSTS`, the paid-run list in
-  `~/.journal/paid_patterns.txt`, and the repos in
+  `~/.journal/paid_patterns.txt`, your own yes list in `~/.journal/yes_patterns.txt`, and the repos in
   `JOURNAL_COMPILE_CORPUS` (read with `git grep` when your rules are compiled).
 - With `JOURNAL_AI_CHECKS` on: `~/.ssh/config`, only the Host blocks that name a host or address the command reaches.
+- The default rules pack (on by default) reads only the command or text about to run or be written, and asks the
+  file system whether a `.env` or key file it would overwrite exists. When a git rule matches, it runs `git status
+  --porcelain`, `git clean -n` or `git rev-parse` locally (3 seconds at most) to see whether there is work to lose
+  or which branch is checked out. Nothing leaves your machine.
 
 ## What it writes
 
 - Journal files you ask it to create or update (`journal_create`, `journal_append`, `journal_update_section`,
   `journal_decision_add`, `journal_capability_add`). Appends use an atomic write.
 - `~/.journal/` (index, the mod's per-session state, `quick_errors.log` when the hook fails, the judge's cache and
-  cost log, the compiled rule tests, the mod's event log, the flood guard's call count, the checks' logs).
+  cost log, the compiled rule tests, the mod's event log, the flood guard's call count, the checks' logs; with an app
+  adapter, `adapter_queue/` for the briefs that wait for the next tool call).
 - `~/journal-outbox/` (or `JOURNAL_OUTBOX`), only when an append targets a read-only journal.
 - `~/.claude/CLAUDE.md` or `./CLAUDE.md`, only with `journal_install_rule(..., confirm=True)`; `~/.claude/settings.json`,
   only with `journal_install_build_check(confirm=True)` or `install_mod.py` (two env keys, backup first).
@@ -72,7 +79,8 @@ The mod is TypeScript run by Claude Code itself. No native extensions, no fetch-
 ## Turning it off
 
 `install_mod.py --uninstall` removes the server entry, the plugin and the two settings keys. Each check of the mod
-can be turned off alone (`JOURNAL_TOOLS_MAP=0`, `JOURNAL_LIVECOPY=0`, `JOURNAL_RULEDUPES=0`, `JOURNAL_ACTION_CHECK=off`).
+can be turned off alone (`JOURNAL_TOOLS_MAP=0`, `JOURNAL_LIVECOPY=0`, `JOURNAL_RULEDUPES=0`, `JOURNAL_ACTION_CHECK=off`,
+`JOURNAL_DEFAULT_RULES=off` or `JOURNAL_DEFAULT_RULES_OFF=<rule,rule>`).
 Background processes, all optional: the meaning service (one copy at most, started on the first search after
 `meaning.py build`; `JOURNAL_MEANING_OFF=1` keeps it off), and with the judge on the rule compiler (one run at a time,
 at the lowest priority, only after a rule line changed; `JOURNAL_AUTOCOMPILE=off` keeps it off) and the command check's program classifier (with `JOURNAL_AI_CHECKS` on). Nothing starts

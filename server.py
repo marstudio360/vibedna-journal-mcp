@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 PRODUCT_SLUG = "journal"
 
 
@@ -336,7 +336,7 @@ _JOURNAL_PATTERNS = [
 # "fixtures": test copies of real journals (tests/fixtures/shapesmith_20261028 held a 10-28 snapshot of MEDIA_HUB
 # and SHOP_FULL) were indexed as live journals, 52 stale entries in every map and reply check (found 2026-10-29).
 _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", "_archive", "venv", ".venv", "dist", "build", "fixtures"}
-# Throwaway git worktrees of a project ("vibedna-site-wt-audio", "-wt-perf") hold stale copies of its journals: every
+# Throwaway git worktrees of a project ("shop-site-wt-audio", "-wt-perf") hold stale copies of its journals: every
 # search showed the same journal three times (2026-10-30). They are skipped.
 _SKIP_DIR_RX = re.compile(r"-wt-[\w.-]+$", re.I)
 

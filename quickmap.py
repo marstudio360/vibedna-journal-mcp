@@ -3562,6 +3562,13 @@ def quick_hook(call: dict, prompt: bool = False):
                 else:  # a note first in the map, not a stop (2026-11-06: it stopped edits of the live file itself)
                     notes.insert(0, newer_text(nb, Path(tg.replace("\\", "/")).name))
                 continue
+            if not m.get("pieces"):
+                try:  # no Brain map row: the journal of the file's own project folder (nearestjournal.py, 2026-11-10)
+                    import nearestjournal
+                    nj_state, nj_msg = nearestjournal.touch(seen, tg, str(call.get("cwd") or ""), _gate)
+                except Exception:
+                    nj_state, nj_msg = "", ""
+                (deny if nj_state == "deny" else notes).extend([nj_msg] if nj_msg else [])
             own_journal = any(t in _name_words(j["journal"]) for j in m.get("journals", []) for t in m.get("terms", []))
             if not quick_map_text(m) or not (m.get("pieces") or own_journal):
                 continue  # loose word matches are noise, and noise teaches everyone to skip the map

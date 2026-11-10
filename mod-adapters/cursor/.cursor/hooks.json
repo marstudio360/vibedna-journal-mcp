@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "matcher": "Shell|Read|Write|Grep|Delete|Task|MCP:.*",
+        "timeout": 45,
+        "failClosed": false
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "matcher": "Shell|Read|MCP:.*",
+        "timeout": 30
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "<PYTHON> <JOURNAL_MCP_DIR>/quick_hook.py --app cursor",
+        "timeout": 15
+      }
+    ]
+  }
+}

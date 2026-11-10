@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.6.0 (2026-11-10)
+
+Journals DNA: safe by default with no setup, the journal brief in any project that has a journal, and BETA adapters
+for Codex, GitHub Copilot and Cursor.
+
+**A default rules pack, on with no setup (`default_rules.py`, `default_rules.json`)**
+- Exact tests, no AI, no judge, nothing to pay. Stopped once (the same call again passes): a secret written into a
+  file, a commit message or a post (API keys and tokens of the common services, private key blocks, a service role
+  key, `password = "..."` literals in code; real `.env` files are skipped, `.env.example` is not); `rm -rf` of a
+  drive, the home folder, a whole project, a system folder or a sibling folder (build output and caches pass); `git
+  reset --hard`, `checkout -- .`, `restore .`, `checkout -f` and `clean -f` only when `git status` or `git clean -n`
+  shows work to lose; `DROP TABLE` / `DATABASE` / `SCHEMA`, `TRUNCATE`, `DELETE` without `WHERE` and `dropdb` inside a
+  database client; a force push to `main` or `master` (`JOURNAL_MAIN_BRANCHES`), the current branch read when the
+  push names none; writing, removing, copying over or redirecting into an existing `.env`, `credentials.json`,
+  `id_rsa`, `*.pem` or `*.key`.
+- Waiting for a yes in your latest message (a plain retry does not pass): publishing to production (`vercel` and
+  `netlify` production deploys, `npm` / `pnpm` / `yarn publish`, `twine upload` outside TestPyPI, `poetry` / `uv` /
+  `cargo publish`, `gem push`, `gh release create` without `--draft`, `firebase deploy`, `fly deploy`, `git push
+  heroku`); spending (a POST to the Stripe API outside test keys, an ads budget or activation change, a cloud VM or
+  GPU create); messaging and posting (`sendmail`, `mail -s`, `swaks`, `Send-MailMessage`, the common email APIs,
+  social network posts and messages, SMS); and your own list in `~/.journal/yes_patterns.txt`.
+- One stop per call: when one of your own exact rule tests already stops a command, the pack stays quiet.
+- Measured before release: 444 normal commands and writes in the worst state (a dirty repository, on main, every
+  file present) gave no stop; 135 bad ones were all caught; about 5,000 real commands of a busy machine gave no stop
+  with a clean repository. Well under a millisecond per normal command.
+- `JOURNAL_DEFAULT_RULES=off` turns it off, `JOURNAL_DEFAULT_RULES_OFF=secrets,force_push,...` single rules.
+  `python default_rules.py "<command>"` shows what the pack says about a command.
+
+**Three questions make it yours (`starter_rules_interview.md`)**
+- After the install your AI asks what costs you money, what must never go out without your yes, and your production
+  branch and deploy command, and writes each answer as a dated rule line plus, for an exact command, one pattern in
+  `paid_patterns.txt` or `yes_patterns.txt` (or `JOURNAL_MAIN_BRANCHES`). Checked exactly on every command, for free.
+
+**The journal brief in any project that has a journal (`nearestjournal.py`)**
+- The first touch of a file no Brain map row names now carries the brief of the journal in its own project folder:
+  from the file's folder up to its journal root, the first folder with 1 to 5 journals decides (more is a workspace
+  of many projects and maps nothing; a root counts only when it holds exactly one journal; a folder of many tools
+  cuts the walk when the tool is not named in the journal). Once per session, the same memory reads use. A Brain map
+  row still goes first.
+
+**A running service or timer is never proof (`unitmap.py`)**
+- A systemd service, timer, socket or path unit, `systemctl` / `journalctl -u` targets and the scripts of cron lines,
+  named in a command or in its output, get the newest incident, pause, kill-switch or resume entry that names them,
+  their Brain map piece, and the line "A running timer is not proof the job works: check its log first". Once per
+  session per unit, no AI. The output note is one JSON document now (it could be two before).
+
+**BETA adapters for Codex, GitHub Copilot and Cursor (`adapters/`, `mod-adapters/`)**
+- `quick_hook.py --app codex|copilot|cursor` turns each app's hook payload into the call the mod already handles and
+  answers in the app's own shape; a crash answers "nothing to say", never a block. Codex: `apply_patch` becomes one
+  edit per file. GitHub Copilot: no text can be added before a tool, so the brief rides right after it.
+  Cursor: native `additional_context`.
+- Codex tested live (the hooks run, the model follows the brief); GitHub Copilot and Cursor tested with recorded hook
+  payloads only. In these apps the journals gate only delivers the brief (`JOURNAL_GATE_<APP>=note`, the default);
+  the default rules pack, your exact rule tests, the paid-run and the server flood guards stay stops.
+
+**Fixed**
+- A short message (under 3 characters, like "ok") now counts as your latest message: an older "yes" could otherwise
+  still open the paid-run guard or the yes-gated default rules.
+
 ## 1.5.0 (2026-11-06)
 
 Journals DNA: your AI gets the memory with the call instead of a stop, your rules check every command for free, and

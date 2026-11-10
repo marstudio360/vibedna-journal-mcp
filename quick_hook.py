@@ -514,7 +514,7 @@ def read_turn(call: dict):
         if hit and not _folder_owns(hit, p, cwd):
             # a container folder (TOOL SHOP holds dozens of tools) whose journal is about one of them: a file of
             # another tool is not that journal's piece; a note at most, never a gate (2026-10-27: running the
-            # gmail tool in TOOL SHOP/servers/gmail-mcp was stopped 6 times for JOURNAL_MCP_JOURNAL.md)
+            # gmail tool in TOOL SHOP/servers/mail-tool was stopped 6 times for JOURNAL_MCP_JOURNAL.md)
             key = "r:" + hit[0].lower() + ":" + _sub_key(hit, p, cwd)
             if fresh(key, hit[1]):
                 notes.append(f'- project "{hit[0]}": journals {", ".join(hit[1][:3])}')
@@ -830,6 +830,13 @@ def main():
             event("reminder")
             if not (tm and tm.get("deny")):
                 tm = {"note": rem + ("\n\n" + tm["note"] if tm and tm.get("note") else "")}
+        try:  # a unit named in the command: its newest incident/pause entry (unitmap.py, 2026-11-10)
+            import unitmap
+            un = unitmap.command_note(call, _state, _save)
+        except Exception:
+            un = ""
+        if un and not (tm and tm.get("deny")):
+            tm = {"note": un + ("\n\n" + tm["note"] if tm and tm.get("note") else "")}
     if not tm and not agent:
         return _main(call)
     import io
@@ -854,6 +861,19 @@ def _main(call: dict):
             f, seen = _state(call)
             seen["n"] = int(seen.get("n", 0)) + 1  # a short "ok" is still a new user message
             _save(f, seen)
+            try:  # an older "yes" must not outlive a newer short message (money guard, yes-gated default rules)
+                import quickmap
+                f_q, seen_q = quickmap._quick_seen(call.get("session_id", ""))
+                short = str(call.get("prompt") or "").strip()
+                seen_q["last_msg"] = short
+                try:
+                    import newest
+                    newest.remember_msg(seen_q, short)
+                except Exception:
+                    pass
+                f_q.write_text(json.dumps(seen_q), encoding="utf-8")
+            except Exception:
+                pass
             return
     else:
         ti = call.get("tool_input") or {}
@@ -962,6 +982,11 @@ def _main(call: dict):
     if stop:
         return quickmap.stop_check(call)
     if output:
+        try:  # unit states (unitmap.py, 2026-11-10) and ONE json for every output note; a copy without it keeps the old
+            import unitmap
+            return unitmap.output_hook(call, quickmap, _state, _save)
+        except Exception:
+            pass
         f, seen = _state(call)
         shown = set(seen.get("out_ids") or [])
         hit = quickmap.output_check(call, shown) | quickmap.git_eol_check(call, shown)
@@ -987,6 +1012,15 @@ def _main(call: dict):
         seen_m["mapped_files"] = dict(sorted(m.items(), key=lambda t: -t[1])[:200])
         _save(f_m, seen_m)
 
+
+if __name__ == "__main__" and "--app" in sys.argv:
+    # Other AI apps (Codex, GitHub Copilot, Cursor): adapters/ turns their hook JSON into this hook's input and runs main().
+    try:
+        from adapters.run import main as _app_main
+        sys.exit(_app_main(sys.argv))
+    except Exception:
+        print("{}")
+        sys.exit(0)
 
 if __name__ == "__main__":
     try:
