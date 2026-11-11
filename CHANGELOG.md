@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 (2026-11-11)
+
+Same code as 1.6.0. Every dependency is now pinned to an exact, tested version (mcp 1.30.0 and the 28 packages it pulls in), so every install gets exactly what the full test suite passed with. `requirements.txt` lists them; the install steps are unchanged.
+
 ## 1.6.0 (2026-11-10)
 
 Journals DNA: safe by default with no setup, the journal brief in any project that has a journal, and BETA adapters
