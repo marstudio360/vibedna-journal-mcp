@@ -37,6 +37,15 @@ RULE_FILE = re.compile(r"^(?:OWNER_SAID|(?:[\w-]+_)?RULES)_JOURNAL\.md$", re.I)
 RETRY_S = 1800  # a denied command passes if run again unchanged within 30 min (the judge can be wrong; never a deadlock)
 RECENT_S = 600  # the commands of the last 10 minutes go to the judge: a rule about rates (connections per minutes) needs them
 RECENT = HOME / "action_recent.json"
+
+
+def _redact(text: str) -> str:
+    """Secrets out of every command this module writes to disk (log and recent list)."""
+    try:
+        from default_rules import redact
+        return redact(text)
+    except Exception:
+        return text
 PROGS = HOME / "action_progs.json"   # {program: {"seen": [rule keys judged], "about": [rule keys about it]}}
 PROGS_LOCK = HOME / "action_progs.lock"
 
@@ -473,7 +482,7 @@ def _remember(cmd: str, now: float) -> list:
     def f(rec):
         rec[:] = [r for r in rec if now - float(r[0]) < RECENT_S]
         before.extend(rec)
-        rec.append([now, cmd[:300]])
+        rec.append([now, _redact(cmd)[:300]])
         del rec[:-60]
     _update(RECENT, [], f)
     return before
@@ -605,13 +614,13 @@ def check(cmd: str, desc: str = "", heads_override: list | None = None, context:
 
             def mark(rec):
                 for r in reversed(rec):
-                    if r[1] == cmd[:300]:
+                    if r[1] == _redact(cmd)[:300]:
                         r[2:] = [True]
                         break
             _update(RECENT, [], mark)
         try:
             with LOG.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "cmd": cmd[:300],
+                f.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "cmd": _redact(cmd)[:300],
                                     "heads": hs, "applies": sorted(applies), "breaks": breaks,
                                     "s": round(time.time() - t0, 1)}, ensure_ascii=False) + "\n")
         except Exception:

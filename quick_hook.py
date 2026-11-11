@@ -98,6 +98,11 @@ def event(kind: str, **kw) -> None:
     try:
         import time
         from pathlib import Path
+        try:
+            from default_rules import redact
+            kw = {k: redact(v) if isinstance(v, str) else v for k, v in kw.items()}
+        except Exception:
+            pass
         with (Path(_home()) / "mod_events.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": kind, **kw},
                                 ensure_ascii=False) + chr(10))

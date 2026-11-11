@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.2 (2026-11-11)
+
+The mod's logs never keep secrets. Commands written to `action_check_log.jsonl`, `action_recent.json` and
+`mod_events.jsonl` (in your journal home) now have keys, tokens, passwords, auth headers and credentials in
+URLs replaced by `<redacted>` before they are saved. Before this, a command that carried a key kept it in
+the log in plain text. If you used an earlier version, delete those three files or search them for keys;
+nothing else changes. Same pinned dependencies as 1.6.1.
+
 ## 1.6.1 (2026-11-11)
 
 Same code as 1.6.0. Every dependency is now pinned to an exact, tested version (mcp 1.30.0 and the 28 packages it pulls in), so every install gets exactly what the full test suite passed with. `requirements.txt` lists them; the install steps are unchanged.

@@ -1,4 +1,4 @@
-# Exact versions tested with Journals DNA 1.6.1 (clean install, full test suite green). Install with:
+# Exact versions tested with Journals DNA 1.6.2 (clean install, full test suite green). Install with:
 #   pip install -r requirements.txt
 # The tool itself only needs mcp; the rest are what mcp pulls in, pinned so every install matches the tested one.
 annotated-types==0.8.0

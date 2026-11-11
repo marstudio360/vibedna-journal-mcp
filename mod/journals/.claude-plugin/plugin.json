@@ -1,6 +1,6 @@
 {
   "name": "journals",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Your AI cannot skip your journal: before your AI touches, builds or answers about anything, it sees that thing's map (journal, decisions, what exists, latest, pending) and the tools that already do the job; the first touch of a file in a project with a journal carries its journal brief, a default rules pack stops the classic disasters (leaked keys, wiping deletes, force push to main) with no setup, and your exact rules stop what breaks them.",
   "author": {
     "name": "Vibedna",

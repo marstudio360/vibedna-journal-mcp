@@ -32,6 +32,28 @@ HERE = Path(__file__).parent
 _D: dict = {}
 
 
+_ASSIGN = re.compile(r"(?i)\b([A-Za-z0-9_]*(?:key|token|secret|password|passwd|pwd)[A-Za-z0-9_]*)(\s*[=:]\s*[\"']?)"
+                     r"([^\s\"'&;|]{8,})")
+_AUTH = re.compile(r"(?i)(authorization:\s*(?:bearer|basic)\s+|x-api-key:\s*)([^\s\"']{8,})")
+_URL_CRED = re.compile(r"(?i)(https?://[^/\s:@]+:)([^@\s/]{4,})(@)")
+
+
+def redact(text: str) -> str:
+    """The text with secrets replaced by <redacted>, for anything written to a log or state file. The command log kept
+    commands verbatim, keys included (a VOYAGE_API_KEY=... line sat in it in plain text, found 2026-11-11)."""
+    if not text:
+        return text
+    try:
+        for _, rx in data()["_fmt"]:
+            text = rx.sub("<redacted>", text)
+    except Exception:
+        pass
+    text = _ASSIGN.sub(lambda m: m.group(1) + m.group(2) + ("<redacted>" if not m.group(3).startswith(("$", "<", "%"))
+                                                           else m.group(3)), text)
+    text = _AUTH.sub(r"\1<redacted>", text)
+    return _URL_CRED.sub(r"\1<redacted>\3", text)
+
+
 def data() -> dict:
     if not _D:
         _D.update(json.loads((HERE / "default_rules.json").read_text(encoding="utf-8")))
