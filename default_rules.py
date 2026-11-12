@@ -194,7 +194,10 @@ _PREFIX = re.compile(r"^(?:(?:sudo|doas)\s+(?:-\S+\s+)*|env\s+(?:-\S+\s+)*|time\
 
 _WRAP = re.compile(r"^(?:timeout\s+(?:-\S+\s+)*\d+\S*\s+)?(?:(ssh)\s+(?:-\S+\s+(?:(?![\"'])\S+\s+)?)*[\w.@-]+|"
                    r"(?:ba|z|da)?sh\s+-l?c|(?:powershell|pwsh)(?:\.exe)?\s+(?:-\S+\s+)*-c(?:ommand)?|cmd(?:\.exe)?\s+/[ck])"
-                   r"\s+([\"'])(.*)\2\s*$", re.S | re.I)
+                   r"\s+([\"'])(.*)\2(?:\s*\d?(?:<|>>?)&?\s*[^\s;&|]+)*\s*$", re.S | re.I)
+# The trailing redirections ("ssh host '...' < /dev/null 2>&1") must not hide the wrapped command: without them in the
+# pattern the whole remote script stayed one segment and `rm -rf /tmp/x; git -C /home/a/site ...` read every later
+# word as an rm target (two false stops on 2026-11-11/12).
 
 
 def _expanded(cmd: str, depth: int = 0) -> list:

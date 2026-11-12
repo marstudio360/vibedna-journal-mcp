@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.3 (2026-11-12)
+
+Fewer false stops: a remote command followed by redirections (for example `ssh host '...' < /dev/null`)
+is now opened and checked command by command. Before, the safety rules read the whole remote script as one
+command, so deleting a temp folder there could be reported as deleting every folder named later in the line.
+A real wipe sent through ssh still stops. Same pinned dependencies as 1.6.2.
+
 ## 1.6.2 (2026-11-11)
 
 The mod's logs never keep secrets. Commands written to `action_check_log.jsonl`, `action_recent.json` and
