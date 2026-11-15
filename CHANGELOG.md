@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.4 (2026-11-15)
+
+Installer fixes, found by a real install on Windows. No change to the server, the mod or the rules.
+- **Windows:** the installer runs the `claude` command by its full path and reads its output as UTF-8. By its
+  bare name a `claude.cmd` was not found (WinError 2), so the three Claude Code steps and the uninstall
+  failed and had to be run by hand.
+- **Coming from an earlier version:** an older `journal` server entry in a `.mcp.json` or in `~/.claude.json`
+  that would run instead of this version is now named by the dry run and the install, with how to remove it.
+  So is a `JOURNAL_ROOTS` or `JOURNAL_HOME` set only in a server entry, which the mod's hooks cannot see. The
+  installer does not edit those files.
+Same pinned dependencies as 1.6.3.
+
 ## 1.6.3 (2026-11-12)
 
 Fewer false stops: a remote command followed by redirections (for example `ssh host '...' < /dev/null`)

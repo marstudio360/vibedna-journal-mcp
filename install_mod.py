@@ -15,6 +15,7 @@ Your journals are never touched. Running it again changes nothing.
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -39,11 +40,15 @@ def run_claude(*args: str, dry: bool = False) -> tuple[int, str]:
     if dry:
         say("  would run: " + " ".join(f'"{a}"' if " " in a else a for a in cmd))
         return 0, ""
+    # By its full path: on Windows the command is a .cmd file, which is not found by its bare name (WinError 2).
+    cmd[0] = shutil.which("claude") or "claude"
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+        # Read as UTF-8, whatever the console's own code page: the command prints marks the Windows default cannot decode.
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                           stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, str(e)
-    return r.returncode, (r.stdout + r.stderr).strip()
+    return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()
 
 
 def load_settings() -> dict:
@@ -81,6 +86,79 @@ def preflight() -> None:
         sys.exit(1)
 
 
+HOOK_ENV = ("JOURNAL_ROOTS", "JOURNAL_HOME")   # where the journals and the index are: the server and the hooks must agree
+
+
+def _same_file(a: str, b: Path) -> bool:
+    try:
+        return os.path.normcase(os.path.abspath(os.path.expanduser(a))) == os.path.normcase(os.path.abspath(str(b)))
+    except (OSError, ValueError):
+        return False
+
+
+def journal_entries() -> list[dict]:
+    """Every server named 'journal' that Claude Code can read for this person: the project files (.mcp.json in the
+    home folder and in this folder), the project blocks of ~/.claude.json and its user block. Read only.
+    Claude Code uses a project entry before the user entry this installer adds, so an older copy named there keeps
+    running in every session opened from that folder, with no notice (reported from a real Windows install of 1.6.3,
+    where the install guide of an earlier version had put the entry in ~/.mcp.json)."""
+    home, found, seen = Path.home(), [], set()
+
+    def take(where: str, scope: str, folder: str, entry) -> None:
+        if not isinstance(entry, dict):
+            return
+        args = [str(a) for a in (entry.get("args") or [])]
+        env = entry.get("env") if isinstance(entry.get("env"), dict) else {}
+        found.append({"where": where, "scope": scope, "folder": folder,
+                      "runs": " ".join([str(entry.get("command") or ""), *args]).strip(),
+                      "ours": any(_same_file(a, HERE / "server.py") for a in args),
+                      "env": {k: str(env[k]) for k in HOOK_ENV if env.get(k)}})
+
+    for folder in (home, Path.cwd()):
+        f = folder / ".mcp.json"
+        try:
+            key = os.path.normcase(str(f.resolve()))
+            if key in seen or not f.is_file():
+                continue
+            seen.add(key)
+            take(str(f), "project", str(folder), (json.loads(f.read_text(encoding="utf-8")).get("mcpServers") or {}).get(MCP_NAME))
+        except (OSError, ValueError, AttributeError):
+            pass
+    try:
+        conf = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+        take(str(home / ".claude.json"), "user", "", (conf.get("mcpServers") or {}).get(MCP_NAME))
+        for folder, block in (conf.get("projects") or {}).items():
+            if isinstance(block, dict):
+                take(str(home / ".claude.json"), "local", str(folder), (block.get("mcpServers") or {}).get(MCP_NAME))
+    except (OSError, ValueError, AttributeError):
+        pass
+    return found
+
+
+def entry_notes(settings_env: dict) -> list[str]:
+    """What is wrong with the 'journal' entries found, one text each, with what to do. Empty when nothing is."""
+    notes = []
+    for e in journal_entries():
+        if not e["ours"]:
+            if e["scope"] == "user":
+                notes.append(f"an older '{MCP_NAME}' server is registered for your user ({e['where']}) and runs another copy: "
+                             f"{e['runs']}. Remove it with  claude mcp remove {MCP_NAME} -s user  and run this installer again")
+            else:
+                notes.append(f"an older '{MCP_NAME}' server entry in {e['where']} ({e['scope']} scope, folder {e['folder']}) "
+                             f"runs another copy: {e['runs']}. Claude Code uses it before the one this install adds, so in "
+                             f"sessions opened from that folder the older copy keeps running. Remove it: run  claude mcp remove "
+                             f"{MCP_NAME} -s {e['scope']}  from that folder (or delete the \"{MCP_NAME}\" entry in that file), "
+                             f"then restart Claude Code")
+        for k, v in e["env"].items():
+            if str(settings_env.get(k) or "") != v:
+                other = " (or list the folders as roots in ~/.journal/config.toml, which both read)" if k == "JOURNAL_ROOTS" else ""
+                notes.append(f"the '{MCP_NAME}' entry in {e['where']} sets {k}={v}, and the env block of ~/.claude/settings.json "
+                             f"does not. The mod's hooks never see a server entry: they run with that env block, so the hooks "
+                             f"and the server would look at different folders. Add to the env block of "
+                             f"~/.claude/settings.json:  \"{k}\": {json.dumps(v)}{other}")
+    return notes
+
+
 def mcp_registered() -> bool:
     code, out = run_claude("mcp", "get", MCP_NAME)
     return code == 0 and "server.py" in out
@@ -108,6 +186,11 @@ def install(dry: bool, yes: bool) -> int:
         say(f"  claude plugin install {PLUGIN}@{MARKETPLACE}")
     else:
         say("  (the claude command was not found: the three Claude Code steps are printed at the end)")
+    notes = entry_notes({**env, **todo})
+    if notes:
+        say("Found from an earlier install, for you to fix (this installer does not edit these):")
+        for n in notes:
+            say("  - " + n)
     if dry:
         say("\nDry run: nothing written.")
         if have_claude:
@@ -145,6 +228,9 @@ def install(dry: bool, yes: bool) -> int:
         say("\nSteps left for you (run them in a terminal where the claude command works):")
         for c in left:
             say("  " + c)
+    if notes:
+        say("\nStill to fix from an earlier install (listed above): until then an older copy can keep running. Run")
+        say("install_mod.py --dry-run  to see them again.")
     say("\nDone. Restart Claude Code (close it, open a new session) and ask your AI: journal_quick(\"<a word from your project>\").")
     say("Check the mod: ask it to edit a file your Brain map names; the first touch carries that piece's journal")
     say("brief (handoff, state, pending, decisions, rules) with the call.")
