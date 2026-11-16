@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Neural DNA · Memory for your AI</title>
+<style>
+:root{--bg:#04050b;--ink:#eef0ff;--mute:#9aa1c4;--line:rgba(255,255,255,.1);--panel:rgba(10,12,24,.72);--c1:#22d3ee;--c2:#6366f1;--c3:#a78bfa;--c4:#e879f9}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#c{position:fixed;inset:0;width:100vw;height:100dvh;display:block;touch-action:none}
+.k{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#aab1d6}
+h1{font-size:clamp(19px,2.3vw,27px);line-height:1.15;font-weight:650;margin:8px 0 2px;max-width:320px;letter-spacing:-.01em}
+.legend{margin-top:12px;font-size:12.5px;color:#aab1d6;display:flex;gap:14px;flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--c1);vertical-align:baseline}
+.legend i.w{background:#fff;box-shadow:0 0 8px #fff}
+.hud{position:fixed;pointer-events:none;z-index:2}
+.tl{left:max(18px,env(safe-area-inset-left));top:max(16px,env(safe-area-inset-top))}
+.big{font-size:clamp(46px,9vw,92px);font-weight:750;line-height:.95;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin:6px 0 2px;background:linear-gradient(90deg,var(--c1),var(--c3) 55%,var(--c4));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--ink);opacity:.86;font-size:clamp(14px,2.2vw,18px)}
+.stats{display:flex;gap:clamp(14px,3vw,30px);margin-top:12px}
+.stats b{display:block;font-size:clamp(18px,3vw,26px);font-variant-numeric:tabular-nums;font-weight:700}
+.stats span{font-size:12.5px;color:#aab1d6}
+.tr{right:max(18px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));text-align:right}
+.date{font-size:clamp(18px,3.2vw,30px);font-weight:650;font-variant-numeric:tabular-nums}
+.week{position:fixed;z-index:2;right:max(18px,env(safe-area-inset-right));top:104px;width:250px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);pointer-events:none}
+.week ol{list-style:none;margin:8px 0 0;padding:0}
+.week li{position:relative;display:flex;justify-content:space-between;gap:10px;padding:5px 8px;margin:3px 0;border-radius:7px;overflow:hidden;font-size:13.5px}
+.week li i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,rgba(34,211,238,.26),rgba(232,121,249,.14));border-radius:7px}
+.week li span,.week li b{position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.week li b{font-variant-numeric:tabular-nums;color:#fff;flex:none}
+.bar{position:fixed;z-index:3;left:0;right:0;bottom:0;display:flex;align-items:center;gap:12px;padding:10px max(16px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:linear-gradient(180deg,transparent,rgba(4,5,11,.92) 38%)}
+button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:999px;height:44px;min-width:44px;padding:0 16px;cursor:pointer;flex:none}
+button:hover{border-color:rgba(255,255,255,.3)}
+button:focus-visible{outline:2px solid var(--c1);outline-offset:2px}
+#play{width:44px;padding:0;font-size:16px}
+.track{position:relative;flex:1;height:44px;cursor:pointer;touch-action:none}
+#spark{position:absolute;inset:0;width:100%;height:100%}
+#head{position:absolute;top:2px;bottom:2px;width:2px;background:#fff;box-shadow:0 0 12px var(--c1);border-radius:2px;left:0}
+#tip{position:fixed;z-index:4;pointer-events:none;background:rgba(8,10,20,.94);border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:13px;max-width:240px;display:none}
+#tip b{display:block;font-size:14px}
+#tip span{color:var(--mute)}
+.livebar{position:fixed;z-index:2;left:max(18px,env(safe-area-inset-left));right:18px;bottom:70px;font-size:12.5px;color:rgba(190,196,228,.92);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .6s}
+.livebar b{color:#fff;letter-spacing:.12em;margin-right:6px}
+.livebar.new{color:#fff}
+.pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:7px;animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.7)}70%{box-shadow:0 0 0 9px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+@media (min-width:1100px){.week{left:max(18px,env(safe-area-inset-left));right:auto;top:auto;bottom:112px;width:300px}}
+@media (max-width:760px){
+  .week{left:12px;right:12px;top:auto;bottom:68px;width:auto;padding:8px 10px}
+  .week li:nth-child(n+4){display:none}
+  .week li{font-size:12.5px;padding:3px 8px;margin:2px 0}
+  .tr{right:14px}
+  h1{max-width:60%}
+  .date{font-size:17px}
+  .livebar{left:14px;right:14px;bottom:186px}
+  #names{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Animated map of your journals growing over time"></canvas>
+<div class="hud tl">
+  <div class="k">Neural DNA</div>
+  <h1>Your AI's memory, growing every day</h1>
+  <div class="big" id="nE">0</div>
+  <div class="sub">entries your AI wrote down</div>
+  <div class="stats">
+    <div><b id="nJ">0</b><span>journals</span></div>
+    <div><b id="nD">0</b><span>decisions kept</span></div>
+    <div><b id="nW">0</b><span>words</span></div>
+  </div>
+  <div class="legend"><span><i></i>one dot, one entry</span><span><i class="w"></i>a decision kept</span></div>
+</div>
+<div class="hud tr"><div class="date" id="date"></div><div class="k" id="dayN"></div></div>
+<aside class="week"><div class="k">Grew most, last 7 days</div><ol id="wk"></ol></aside>
+<div class="livebar" id="foot"></div>
+<div class="bar">
+  <button id="play" aria-label="Pause">❚❚</button>
+  <div class="track" id="track"><canvas id="spark"></canvas><div id="head"></div></div>
+  <button id="names">Hide names</button>
+</div>
+<div id="tip"></div>
+<script>const DATA=/*DATA*/null;</script>
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+if(!DATA){document.body.insertAdjacentHTML("beforeend","<p style='position:fixed;inset:45% 0 0;text-align:center'>No data in this page. Run growth.py to make it.</p>");return;}
+const q=new URLSearchParams(location.search);
+const PAL=["#22d3ee","#e879f9","#a78bfa","#34d399","#fbbf24","#60a5fa","#fb7185","#2dd4bf","#c084fc","#f97316","#93c5fd","#a3e635"];
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const CARD=3,S=2.3,GAP=5,DUR=26000;
+const cv=$("c"),cx=cv.getContext("2d"),settled=document.createElement("canvas"),sx=settled.getContext("2d");
+const sp=$("spark"),sc=sp.getContext("2d"),tip=$("tip"),track=$("track"),foot=$("foot");
+const fmt=n=>Math.round(n).toLocaleString("en-US");
+const still=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const web=/^https?:$/.test(location.protocol);
+let gen=0,ctl=null,current=null,hidePref=null,liveOK=false;
+function shade(hex,k){const n=parseInt(hex.slice(1),16),f=v=>Math.max(0,Math.min(255,Math.round(v+(k>0?(255-v)*k:v*k))));return "rgb("+f(n>>16)+","+f(n>>8&255)+","+f(n&255)+")";}
+function free(placed,r,aspect,gap){
+  if(!placed.length)return [0,0];
+  let t=0;
+  for(;;){
+    const rr=1.15*t;t+=Math.min(.35,3.5/(rr+1));
+    const x=rr*Math.cos(t)*aspect,y=rr*Math.sin(t);let ok=true;
+    for(const p of placed){const dx=p.x-x,dy=p.y-y,m=p.r+r+gap;if(dx*dx+dy*dy<m*m){ok=false;break;}}
+    if(ok)return [x,y];
+  }
+}
+function pack(items,aspect,gap){const placed=[];for(const it of items){const xy=free(placed,it.r,aspect,gap);it.x=xy[0];it.y=xy[1];placed.push(it);}}
+
+// prev: {pos, tot, ne} of the data shown before a live update; its journals keep their place
+function boot(D,prev){
+  const my=++gen;if(ctl)ctl.abort();ctl=new AbortController();const on={signal:ctl.signal};
+  const J=D.journals,NJ=J.length,E=D.e,NE=E.length/3,ND=D.days;
+  const day0=new Date(D.day0+"T00:00:00Z");
+  const dateAt=d=>{const t=new Date(day0.getTime()+d*864e5);return t.getUTCDate()+" "+MON[t.getUTCMonth()]+" "+t.getUTCFullYear();};
+  const loc=new Uint32Array(NE),tot=new Uint32Array(NJ),cum=new Uint32Array(ND+1),cumW=new Float64Array(ND+1);
+  for(let i=0;i<NE;i++){const j=E[i*3+1];loc[i]=tot[j]++;cum[E[i*3]+1]++;}
+  for(let d=0;d<ND;d++){cum[d+1]+=cum[d];cumW[d+1]=cumW[d]+(D.w[d]||0);}
+  const first=new Int32Array(NJ).fill(-1),last=new Int32Array(NJ);
+  for(let i=0;i<NE;i++){const j=E[i*3+1];if(first[j]<0)first[j]=E[i*3];last[j]=E[i*3];}
+  const rad=new Float32Array(NJ),jx=new Float32Array(NJ),jy=new Float32Array(NJ),col=new Array(NJ);
+  for(let j=0;j<NJ;j++)rad[j]=S*Math.sqrt(tot[j])+3.5;
+  const gsize=new Float64Array(D.groups.length);for(let j=0;j<NJ;j++)gsize[J[j].g]+=tot[j];
+  const gorder=[...gsize.keys()].sort((a,b)=>gsize[b]-gsize[a]),gcol={};
+  gorder.forEach((g,i)=>gcol[g]=PAL[i%PAL.length]);
+  for(let j=0;j<NJ;j++)col[j]=shade(gcol[J[j].g],((j*37)%9-4)/22);
+  const glowCol=col.map(c=>c.replace("rgb(","rgba(").replace(")",",.2)"));
+  let W=0,H=0,dpr=1,scale=1,ox=0,oy=0,dotR=1,keep=prev||null;
+  function layout(){
+    const small=W<=760,wide=W>=1100,padT=small?262:(wide?64:300),padB=small?236:84,padL=wide?Math.min(372,W*.27):14,padR=(small||wide)?14:282;
+    const aspect=Math.max(.62,Math.min(1.9,(W-padL-padR)/Math.max(1,H-padT-padB)));
+    if(keep){
+      const placed=[];
+      for(let j=0;j<NJ;j++){const xy=keep.pos.get(J[j].k);if(xy){jx[j]=xy[0];jy[j]=xy[1];placed.push({x:xy[0],y:xy[1],r:rad[j]});}}
+      for(let j=0;j<NJ;j++){if(keep.pos.has(J[j].k))continue;const xy=free(placed,rad[j],aspect,GAP);jx[j]=xy[0];jy[j]=xy[1];placed.push({x:xy[0],y:xy[1],r:rad[j]});}
+      keep=null;
+    }else{
+      const groups=gorder.map(g=>{
+        const items=[];for(let j=0;j<NJ;j++)if(J[j].g===g)items.push({j:j,r:rad[j]});
+        items.sort((a,b)=>b.r-a.r);pack(items,1,GAP);
+        let r=0;for(const it of items)r=Math.max(r,Math.hypot(it.x,it.y)+it.r);
+        return {g:g,items:items,r:r};
+      });
+      pack(groups,aspect,GAP*3.2);
+      for(const G of groups)for(const it of G.items){jx[it.j]=G.x+it.x;jy[it.j]=G.y+it.y;}
+    }
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+    for(let j=0;j<NJ;j++){x0=Math.min(x0,jx[j]-rad[j]);x1=Math.max(x1,jx[j]+rad[j]);y0=Math.min(y0,jy[j]-rad[j]);y1=Math.max(y1,jy[j]+rad[j]);}
+    scale=Math.min((W-padL-padR)/(x1-x0),(H-padT-padB)/(y1-y0));
+    ox=padL+(W-padL-padR)/2-(x0+x1)/2*scale;oy=padT+(H-padT-padB)/2-(y0+y1)/2*scale;
+    dotR=Math.max(.45,Math.min(2.2,.95*scale));
+  }
+  const px=i=>{const j=E[i*3+1],k=loc[i],r=S*Math.sqrt(k+.5),a=k*2.399963;return [ox+(jx[j]+r*Math.cos(a))*scale,oy+(jy[j]+r*Math.sin(a))*scale];};
+
+  let shown=0,nEnt=0,nDec=0,nJou=0,p=0,playing=true,lastT=0,weekDay=-1,drag=false,labelSet=[],labelAt=0;
+  let hideNames=hidePref!==null?hidePref:(D.hidden||q.get("names")==="0");
+  let intro=(prev||q.has("t")||q.get("autoplay")==="0"||still)?-1:0;
+  let liveHold=0,liveStep=300,liveAt=0;
+  const cnt=new Uint32Array(NJ),fresh=[],pings=[],hot=new Float64Array(NJ);
+  function idxAt(df){const f=Math.min(ND-1e-9,Math.max(0,df)),d=Math.floor(f);return cum[d]+(f-d)*(cum[d+1]-cum[d]);}
+  const fOf=df=>.45*df/ND+.55*idxAt(df)/NE;
+  function dayOf(pp){let a=0,b=ND;for(let i=0;i<34;i++){const m=(a+b)/2;if(fOf(m)<pp)a=m;else b=m;}return (a+b)/2;}
+  function drawDot(i){
+    const xy=px(i),card=E[i*3+2]===CARD;
+    sx.fillStyle=card?"#ffffff":col[E[i*3+1]];sx.globalAlpha=card?1:.86;
+    const r=(card?1.5:1)*dotR*dpr;sx.beginPath();sx.arc(xy[0]*dpr,xy[1]*dpr,r,0,6.2832);sx.fill();
+  }
+  function add(i,glow,ping){
+    const j=E[i*3+1];if(!cnt[j])nJou++;cnt[j]++;
+    if(E[i*3+2]===CARD)nDec++;else nEnt++;
+    drawDot(i);
+    if(glow){hot[j]=performance.now();if(fresh.length<700)fresh.push({i:i,t:hot[j]});}
+    if(ping){pings.push({i:i,t:performance.now()});foot.classList.add("new");setTimeout(()=>foot.classList.remove("new"),1600);}
+  }
+  function setShown(target,glow,ping){
+    target=Math.max(0,Math.min(NE,Math.floor(target)));
+    if(target<shown){sx.clearRect(0,0,settled.width,settled.height);cnt.fill(0);shown=nEnt=nDec=nJou=0;fresh.length=0;glow=false;ping=false;}
+    const burst=target-shown;
+    for(let i=shown;i<target;i++)add(i,glow&&(burst<260||i%Math.ceil(burst/260)===0),ping);
+    shown=target;
+  }
+  function resize(){
+    W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);
+    for(const c of [cv,settled]){c.width=W*dpr;c.height=H*dpr;}
+    layout();const n=shown;shown=NE+1;setShown(n,false,false);sparkDraw();
+  }
+  function pickLabels(){
+    const idx=[];for(let j=0;j<NJ;j++)if(cnt[j]>0)idx.push(j);
+    idx.sort((a,b)=>cnt[b]-cnt[a]);labelSet=idx.slice(0,W<=760?14:30);
+  }
+  const nameOf=j=>hideNames?"Project "+(j+1):J[j].n;
+  function footLine(){
+    foot.textContent="";
+    const r=D.recent&&D.recent.length?D.recent[D.recent.length-1]:null;
+    if(web&&liveOK){
+      const dot=document.createElement("span");dot.className="pulse";const b=document.createElement("b");b.textContent="LIVE";foot.append(dot,b);
+      foot.append(r?"last written "+r[1]+" · "+nameOf(r[0])+(r[2]&&!hideNames?" · "+r[2]:""):"watching "+fmt(NJ)+" journals");
+    }else foot.textContent="Made "+D.made+" · "+fmt(NJ)+" journals";
+  }
+  function frame(now){
+    if(my!==gen)return;
+    const dt=lastT?Math.min(80,now-lastT):0;lastT=now;
+    if(intro>=0){intro+=dt;if(intro<1000)p=1;else if(intro<1800){const u=(intro-1000)/800;p=1-u*u*(3-2*u);}else{intro=-1;p=0;playing=true;btn();}}
+    else if(playing){p=Math.min(1,p+dt/DUR);if(p>=1){playing=false;btn();}}
+    let df=dayOf(p);if(!playing&&!drag&&intro<0&&p<1)df=Math.min(ND,Math.floor(df)+1)-1e-6;
+    if(p>=1&&liveHold>0&&now>=liveAt){liveHold--;liveAt=now+liveStep;setShown(NE-liveHold,true,true);}
+    else setShown(p>=1?NE-liveHold:idxAt(df),playing,false);
+    cx.setTransform(dpr,0,0,dpr,0,0);cx.clearRect(0,0,W,H);
+    cx.lineWidth=1;
+    for(const L of D.links){
+      if(!cnt[L[0]]||!cnt[L[1]])continue;
+      const heat=Math.max(0,Math.min(1,1-(now-Math.max(hot[L[0]],hot[L[1]]))/800));
+      cx.strokeStyle="rgba("+(heat>.02?"120,225,255,":"167,139,250,")+Math.min(.34,.06+L[2]/800+.14*heat)+")";
+      cx.beginPath();cx.moveTo(ox+jx[L[0]]*scale,oy+jy[L[0]]*scale);cx.lineTo(ox+jx[L[1]]*scale,oy+jy[L[1]]*scale);cx.stroke();
+    }
+    for(let j=0;j<NJ;j++){
+      if(!cnt[j])continue;
+      const r=(S*Math.sqrt(cnt[j])+3)*scale,X=ox+jx[j]*scale,Y=oy+jy[j]*scale,gl=cx.createRadialGradient(X,Y,r*.55,X,Y,r*1.55+6);
+      gl.addColorStop(0,glowCol[j]);gl.addColorStop(1,"rgba(0,0,0,0)");
+      cx.fillStyle=gl;cx.beginPath();cx.arc(X,Y,r*1.55+6,0,6.2832);cx.fill();
+      cx.beginPath();cx.arc(X,Y,r,0,6.2832);cx.fillStyle="rgba(8,10,22,.9)";cx.fill();cx.strokeStyle="rgba(255,255,255,.09)";cx.stroke();
+    }
+    cx.drawImage(settled,0,0,W,H);
+    cx.globalCompositeOperation="lighter";
+    for(let k=fresh.length-1;k>=0;k--){
+      const f=fresh[k],a=Math.max(0,(now-f.t)/900);if(a>=1){fresh.splice(k,1);continue;}
+      const xy=px(f.i),r=dotR*(7-5.5*a);
+      const g=cx.createRadialGradient(xy[0],xy[1],0,xy[0],xy[1],r);
+      g.addColorStop(0,"rgba(255,255,255,"+(.9*(1-a))+")");g.addColorStop(1,"rgba(34,211,238,0)");
+      cx.fillStyle=g;cx.beginPath();cx.arc(xy[0],xy[1],r,0,6.2832);cx.fill();
+    }
+    for(let k=pings.length-1;k>=0;k--){
+      const f=pings[k],a=Math.max(0,(now-f.t)/2200);if(a>=1){pings.splice(k,1);continue;}
+      const xy=px(f.i),e=1-Math.pow(1-a,3);
+      cx.lineWidth=2.5*(1-a)+.5;cx.strokeStyle="rgba(140,235,255,"+(1-a)+")";
+      cx.beginPath();cx.arc(xy[0],xy[1],5+52*e,0,6.2832);cx.stroke();
+      cx.fillStyle="rgba(255,255,255,"+(1-a)+")";cx.beginPath();cx.arc(xy[0],xy[1],3.2,0,6.2832);cx.fill();
+    }
+    cx.globalCompositeOperation="source-over";
+    const dNow=Math.floor(df);
+    if(now-labelAt>320||dNow!==weekDay){if(now-labelAt>320){labelAt=now;pickLabels();}weekDay=dNow;week(df);}
+    const boxes=[];cx.textAlign="center";cx.textBaseline="middle";
+    for(const j of labelSet){
+      const r=(S*Math.sqrt(cnt[j])+3)*scale;if(r<5)continue;
+      const fs=Math.max(11,Math.min(15,r*.3)),name=nameOf(j);cx.font="600 "+fs+"px system-ui,sans-serif";
+      // a name wider than its cluster sits under it instead of being dropped (owner 2026-11-14: "more names should
+      // appear"); the overlap test below keeps it from getting crowded, biggest clusters first
+      const w=cx.measureText(name).width+10,X=ox+jx[j]*scale,Y=oy+jy[j]*scale+(w>r*2.2?r+fs*.9:0),b=[X-w/2,Y-fs*.8,X+w/2,Y+fs*.8];
+      if(b[0]<4||b[2]>W-4)continue;
+      if(boxes.some(o=>b[0]<o[2]&&b[2]>o[0]&&b[1]<o[3]&&b[3]>o[1]))continue;
+      boxes.push(b);
+      cx.lineWidth=4;cx.strokeStyle="rgba(4,5,11,.88)";cx.strokeText(name,X,Y);cx.fillStyle="#fff";cx.fillText(name,X,Y);
+    }
+    const d=Math.min(ND-1,Math.floor(df));
+    $("nE").textContent=fmt(nEnt);$("nJ").textContent=fmt(nJou);$("nD").textContent=fmt(nDec);
+    const fw=Math.min(ND,df),fd=Math.floor(fw);$("nW").textContent=fmt(cumW[fd]+(fw-fd)*((cumW[fd+1]||cumW[fd])-cumW[fd]));
+    $("date").textContent=dateAt(d);$("dayN").textContent="day "+(d+1)+" of "+ND;
+    $("head").style.left=(Math.min(1,df/ND)*100)+"%";
+    requestAnimationFrame(frame);
+  }
+  function week(df){
+    const d=Math.floor(df),from=cum[Math.max(0,d-6)],to=shown,m=new Map();
+    for(let i=from;i<to;i++){const j=E[i*3+1];m.set(j,(m.get(j)||0)+1);}
+    const top=[...m.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5),mx=top.length?top[0][1]:1,ol=$("wk");
+    ol.textContent="";
+    if(!top.length){const li=document.createElement("li");li.textContent="nothing yet";ol.append(li);}
+    for(const t of top){
+      const li=document.createElement("li"),i=document.createElement("i"),s=document.createElement("span"),b=document.createElement("b");
+      i.style.width=(t[1]/mx*100)+"%";s.textContent=nameOf(t[0]);b.textContent="+"+t[1];li.append(i,s,b);ol.append(li);
+    }
+  }
+  function sparkDraw(){
+    const r=sp.getBoundingClientRect(),w=Math.max(10,r.width),h=r.height;sp.width=w*dpr;sp.height=h*dpr;sc.setTransform(dpr,0,0,dpr,0,0);sc.clearRect(0,0,w,h);
+    const n=Math.max(1,Math.min(ND,Math.floor(w/3))),bins=new Float64Array(n);let mx=1;
+    for(let d=0;d<ND;d++){const b=Math.min(n-1,Math.floor(d/ND*n));bins[b]+=cum[d+1]-cum[d];}
+    for(let b=0;b<n;b++)mx=Math.max(mx,bins[b]);
+    const g=sc.createLinearGradient(0,0,w,0);g.addColorStop(0,"#22d3ee");g.addColorStop(.6,"#a78bfa");g.addColorStop(1,"#e879f9");sc.fillStyle=g;
+    for(let b=0;b<n;b++){const bh=Math.max(1.5,Math.sqrt(bins[b]/mx)*(h-16));sc.fillRect(b*w/n,h-13-bh,Math.max(1,w/n-1),bh);}
+    sc.fillStyle="rgba(190,196,228,.95)";sc.font="11px system-ui,sans-serif";sc.textBaseline="bottom";
+    let lastX=-99;
+    for(let d=0;d<ND;d++){const t=new Date(day0.getTime()+d*864e5);if(t.getUTCDate()!==1)continue;const x=d/ND*w;if(x-lastX<42||x>w-22)continue;lastX=x;sc.fillText(MON[t.getUTCMonth()]+(t.getUTCMonth()===0?" "+t.getUTCFullYear():""),x,h);}
+  }
+  function btn(){const b=$("play");b.textContent=playing?"❚❚":(p>=1?"↻":"▶");b.setAttribute("aria-label",playing?"Pause":(p>=1?"Replay":"Play"));}
+  $("play").onclick=()=>{liveHold=0;if(intro>=0){intro=-1;p=0;playing=true;}else if(p>=1){p=0;playing=true;}else playing=!playing;btn();};
+  $("names").onclick=()=>{hideNames=!hideNames;hidePref=hideNames;$("names").textContent=hideNames?"Show names":"Hide names";labelAt=0;footLine();};
+  $("names").style.display=(D.hidden||D.demo)?"none":"";$("names").textContent=hideNames?"Show names":"Hide names";
+  function scrub(ev){const r=track.getBoundingClientRect();p=fOf(Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width))*ND);}
+  track.addEventListener("pointerdown",ev=>{drag=true;intro=-1;liveHold=0;playing=false;btn();track.setPointerCapture(ev.pointerId);scrub(ev);},on);
+  track.addEventListener("pointermove",ev=>{if(drag)scrub(ev);},on);
+  track.addEventListener("pointerup",()=>{drag=false;},on);
+  addEventListener("keydown",ev=>{if(ev.code==="Space"&&ev.target.tagName!=="BUTTON"){ev.preventDefault();$("play").click();}},on);
+  function hit(ev){
+    let best=-1,bd=1e9;
+    for(let j=0;j<NJ;j++){if(!cnt[j])continue;const r=Math.max(10,(S*Math.sqrt(cnt[j])+3)*scale),dd=Math.hypot(ev.clientX-(ox+jx[j]*scale),ev.clientY-(oy+jy[j]*scale));if(dd<r&&dd<bd){bd=dd;best=j;}}
+    if(best<0){tip.style.display="none";return;}
+    tip.innerHTML="<b></b><span></span>";tip.firstChild.textContent=nameOf(best);
+    tip.lastChild.textContent=fmt(cnt[best])+" of "+fmt(tot[best])+" entries · since "+dateAt(first[best])+" · last "+dateAt(last[best])+(hideNames?"":" · "+D.groups[J[best].g]);
+    tip.style.display="block";
+    tip.style.left=Math.min(W-250,ev.clientX+14)+"px";tip.style.top=Math.min(H-110,ev.clientY+14)+"px";
+  }
+  cv.addEventListener("pointermove",hit,on);cv.addEventListener("pointerdown",hit,on);cv.addEventListener("pointerleave",()=>{tip.style.display="none";},on);
+  addEventListener("resize",resize,on);
+  if(prev){p=1;playing=false;}
+  else if(q.has("t")){p=Math.max(0,Math.min(1,parseFloat(q.get("t"))||0));playing=false;}
+  else if(q.get("autoplay")==="0"||still){p=1;playing=false;}
+  else playing=false;
+  resize();
+  if(prev){
+    const n=Math.max(0,NE-prev.ne);liveHold=n<=400?n:0;liveStep=Math.max(60,Math.min(420,6000/Math.max(1,liveHold)));
+    setShown(NE-liveHold,false,false);
+  }
+  footLine();btn();
+  current={D:D,idle:()=>p>=1&&liveHold===0&&intro<0&&!drag,touch:footLine,
+    snapshot:()=>({pos:new Map(J.map((o,j)=>[o.k,[jx[j],jy[j]]])),ne:NE})};
+  requestAnimationFrame(frame);
+}
+
+// live: the page reads itself again and lets the new entries arrive one by one
+async function poll(){
+  if(!web||!current||document.visibilityState!=="visible"||!current.idle())return;
+  try{
+    const r=await fetch(location.href,{cache:"no-store",credentials:"same-origin"});if(!r.ok)return;
+    const t=await r.text(),a=t.indexOf("const DATA=");if(a<0)return;
+    const nd=JSON.parse(t.slice(a+11,t.indexOf(";<\/script>",a)));if(!nd||!nd.e||!nd.journals)return;
+    const was=liveOK;liveOK=true;
+    if(nd.sig!==current.D.sig&&current.idle())boot(nd,current.snapshot());else if(!was)current.touch();
+  }catch(e){}
+}
+boot(DATA,null);
+if(web){setTimeout(poll,4000);setInterval(poll,Math.max(5,parseInt(q.get("every"))||20)*1000);}
+})();
+</script>
+</body>
+</html>

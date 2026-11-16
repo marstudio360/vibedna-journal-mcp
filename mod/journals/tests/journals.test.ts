@@ -16,20 +16,20 @@ test('a stop for an existing tool says it in plain words, never the internal tex
   const status = world(on, { permissionDecision: 'deny', permissionDecisionReason: 'TOOLS THAT ALREADY DO THIS:\n1. ...' })
   const r = await $.tool.call({ tool: 'Write', file_path: '/work/a.py', content: 'print(1)' })
   expect(String(r.deny || '')).toContain('TOOLS THAT ALREADY DO THIS')
-  expect(status.at(-1)).toBe('Journals DNA · using a tool you already have instead')
+  expect(status.at(-1)).toBe('Neural DNA · using a tool you already have instead')
   expect(status.join(' ')).not.toContain('say why not')
 })
 
 test('a stop until the journal is read says it in plain words', async ($, on) => {
   const status = world(on, { permissionDecision: 'deny', permissionDecisionReason: 'JOURNALS GATE, STOPPED. Before touching ...' })
   await $.tool.call({ tool: 'Edit', file_path: '/work/a.py', old_string: 'a', new_string: 'b' })
-  expect(status.at(-1)).toBe('Journals DNA · reading your notes on this first')
+  expect(status.at(-1)).toBe('Neural DNA · reading your notes on this first')
 })
 
 test('saving to a journal is shown once it worked', async ($, on) => {
   const status = world(on, null)
   await $.tool.call({ tool: 'mcp__journal__journal_append', name_or_path: 'X_JOURNAL.md', entry: 'done' })
-  expect(status.at(-1)).toBe('Journals DNA · saved to your journal')
+  expect(status.at(-1)).toBe('Neural DNA · saved to your journal')
 })
 
 test('a normal edit changes nothing on screen', async ($, on) => {

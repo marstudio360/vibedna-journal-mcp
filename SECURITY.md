@@ -1,6 +1,6 @@
-# Journals DNA: Security Posture
+# Neural DNA: Security Posture
 
-What Journals DNA touches, where data goes, and how to report a vulnerability.
+What Neural DNA touches, where data goes, and how to report a vulnerability.
 
 ## What it is
 
@@ -9,7 +9,7 @@ A **local MCP server** (`server.py`, a Python stdio process started by your MCP 
 Codex, GitHub Copilot and Cursor (`mod-adapters/`) run the same `quick_hook.py` from each app's own hooks file, which
 you copy in yourself. It opens no network listener
 unless you set `JOURNAL_TRANSPORT=http`, which is meant only for cloud hosting, or set up the optional search by
-meaning, whose service listens on `127.0.0.1` only.
+meaning, whose service listens on `127.0.0.1` only, or run `growth.py --serve <port>`, which serves the memory map page on `127.0.0.1` only until you stop it.
 
 ## What it reads
 
@@ -32,6 +32,13 @@ meaning, whose service listens on `127.0.0.1` only.
   --porcelain`, `git clean -n` or `git rev-parse` locally (3 seconds at most) to see whether there is work to lose
   or which branch is checked out. Nothing leaves your machine.
 
+- The memory map (`growth.py`, only when you run it) reads the same journal files to count their dated entries, their
+  Decided cards and which journals name each other, and, when you have built the meaning index, the stored vectors in
+  `~/.journal/index.sqlite`. Nothing leaves your machine.
+- The done check (on by default, `JOURNAL_DONE_CHECK=off`) reads the end of the current session's transcript file,
+  the one Claude Code passes to the Stop hook, to see which tool calls the turn made. It reads tool names, file
+  paths and commands, locally.
+
 ## What it writes
 
 - Journal files you ask it to create or update (`journal_create`, `journal_append`, `journal_update_section`,
@@ -40,7 +47,11 @@ meaning, whose service listens on `127.0.0.1` only.
   cost log, the compiled rule tests, the mod's event log, the flood guard's call count, the checks' logs; with an app
   adapter, `adapter_queue/` for the briefs that wait for the next tool call).
 - `~/journal-outbox/` (or `JOURNAL_OUTBOX`), only when an append targets a read-only journal.
-- `~/.claude/CLAUDE.md` or `./CLAUDE.md`, only with `journal_install_rule(..., confirm=True)`; `~/.claude/settings.json`,
+- `~/.journal/growth/` (the memory map page, `neighbours.json`, `neighbours_meaning.json`), only when you run
+  `growth.py`. A page made with `--hide-names` or `--demo-names` carries no journal name and no entry title.
+- `~/.journal/done_check_log.jsonl`: one line per reply the done check sent back (time, session id, the reason and
+  the last 400 characters of the reply, with keys and tokens replaced by `<redacted>`).
+- `~/.claude/CLAUDE.md` or `./CLAUDE.md`, only with `journal_install_rule(..., confirm=True)` (your file is copied first, and the uninstall takes the section back out of `~/.claude/CLAUDE.md`); `~/.claude/settings.json`,
   only with `journal_install_build_check(confirm=True)` or `install_mod.py` (two env keys, backup first).
 - `_obsidian/` and `.obsidian/` in a folder you name, only with `obsidian.py vault --apply`; a properties block at the
   top of journals, only with `obsidian.py add-frontmatter --apply`.
@@ -73,12 +84,12 @@ when called:
 
 ## Dependencies
 
-One PyPI package: [`mcp`](https://pypi.org/project/mcp/), the official MCP Python SDK, pinned in `requirements.txt`.
+One PyPI package is needed, [`mcp`](https://pypi.org/project/mcp/), the official MCP Python SDK. `requirements.txt` pins it (`mcp==1.30.0`) together with the 28 packages it pulls in, each by exact version and without hashes.
 The mod is TypeScript run by Claude Code itself. No native extensions, no fetch-on-install scripts.
 
 ## Turning it off
 
-`install_mod.py --uninstall` removes the server entry, the plugin and the two settings keys. Each check of the mod
+`install_mod.py --uninstall` removes the server entry, the plugin and the two settings keys, and what the tools `journal_install_rule` and `journal_install_build_check` added if you ever called them. It leaves `~/.journal`, the unzipped folder with its `.venv` and the `settings.json.bak_journals_*` backups for you to delete. Removing the key `JOURNAL_MCP_DIR` from the `env` block of `~/.claude/settings.json` switches the whole mod off (no hook, no paragraph added to your AI's instructions, no status line) while the tools keep working. Each check of the mod
 can be turned off alone (`JOURNAL_TOOLS_MAP=0`, `JOURNAL_LIVECOPY=0`, `JOURNAL_RULEDUPES=0`, `JOURNAL_ACTION_CHECK=off`,
 `JOURNAL_DEFAULT_RULES=off` or `JOURNAL_DEFAULT_RULES_OFF=<rule,rule>`).
 Background processes, all optional: the meaning service (one copy at most, started on the first search after

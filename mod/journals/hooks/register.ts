@@ -19,12 +19,13 @@
 //     journal_quick, or a Read of a *_JOURNAL.md), the mod reports it to quick_hook.py: that record opens the gate
 //   - prompt.submit: a message that names something concrete (a Brain map key, a journal's name, or two common
 //     words that together point at one journal) carries its map; a word's map comes back a few messages later
-//   - classic.Stop: before the turn ends, the reply is judged against the owner brief (owner_brief.py) of the
-//     projects in play; a reply that breaks it is sent back for a rewrite in the same turn
+//   - classic.Stop: before the turn ends, a reply that says done right after a change nobody looked at goes back
+//     once for the line that proves it (donecheck.py, no AI); with JOURNAL_REPLY_GATE=on the reply is also judged
+//     against the owner brief (owner_brief.py) of the projects in play
 //   - turn.complete: the AI's finished reply, when it proposes something, is checked against what the owner already
 //     said (journal verdicts); the check rides into the next turn for the AI, never drawn in the chat
 //   - prompt.compose: a short fixed section in the system prompt, so the habit is part of every turn
-//   - the status line is for the person, never for the AI: a quiet "Journals DNA · active", reset at every message,
+//   - the status line is for the person, never for the AI: a quiet "Neural DNA · active", reset at every message,
 //     and one plain sentence only when something real happens in that turn (2026-11-03: the owner saw the internal
 //     "journals: a tool already does this, use it or say why not" stuck under his prompt, in words meant for the AI)
 // Config (environment): JOURNAL_MCP_DIR = folder of the journal tool's server.py; JOURNAL_PYTHON = python to use.
@@ -41,24 +42,23 @@ const JOURNAL_READ_TOOL = /^mcp__journal__journal_(read|read_section|handoff_bri
 const JOURNAL_SAVE_TOOL = /^mcp__journal__journal_(append|update_section|decision_add|capability_add)$/
 
 // What the person sees under the prompt: calm by default, one plain sentence for a real event.
-const ACTIVE = 'Journals DNA · active'
+const ACTIVE = 'Neural DNA · active'
 const SAID = {
-  read: 'Journals DNA · reading your notes on this first',
-  tool: 'Journals DNA · using a tool you already have instead',
-  decided: 'Journals DNA · found what you already decided on this',
-  saved: 'Journals DNA · saved to your journal',
-  fixed: 'Journals DNA · fixing a reply that went against your notes',
+  read: 'Neural DNA · reading your notes on this first',
+  tool: 'Neural DNA · using a tool you already have instead',
+  decided: 'Neural DNA · found what you already decided on this',
+  saved: 'Neural DNA · saved to your journal',
+  fixed: 'Neural DNA · one more check on that reply',
 }
 const DECIDED = /OWNER BRIEF|DECIDED:|already decided|the owner already said/i
 
 const BRAIN = [
   'JOURNALS (one brain). Every project keeps its context in a *_JOURNAL.md.',
   'Before touching, building or answering about anything, call journal_quick("<word or file>") and read what it',
-  'points to: what was decided, what exists, what is in flight, who is working on it now. There are no owners:',
-  'anyone may take any piece once its context is read. The journals mod shows the map by itself when you touch',
-  'a mapped piece, and hands you that piece\'s journal brief with the call: read it before you act.',
+  'points to: what was decided, what exists, what is in flight. The journals mod shows the map by itself when you',
+  'touch a mapped piece, and hands you that piece\'s journal brief with the call: read it before you act.',
   'Before writing or running your own script for a job, use the tool that already does it: the mod lists them',
-  '("TOOLS THAT ALREADY DO THIS"); if none fits, say in one line why and improve that tool.',
+  '("TOOLS THAT ALREADY DO THIS"); if none fits, say in one line why.',
 ].join('\n')
 
 type Out = { permissionDecision?: string; permissionDecisionReason?: string; additionalContext?: string }
@@ -151,7 +151,7 @@ export const register: Register = on => {
       return ran
     } else if (JOURNAL_SAVE_TOOL.test(e.tool)) {
       const ran: any = await next(e)
-      if (ran?.deny === undefined && ran?.isError !== true) $.ui.status(SAID.saved)
+      if (ran?.deny === undefined && ran?.isError !== true && (await $.env.get('JOURNAL_MCP_DIR'))) $.ui.status(SAID.saved)
       return ran
     }
     if (!input) return next(e)
@@ -197,13 +197,15 @@ export const register: Register = on => {
   on('classic.Stop', async ($, e: any, next) => {
     const r: any = await next(e)
     if (r?.block || e.stop_hook_active || !e.last_assistant_message) return r
-    const out: any = await quick($, { reply: e.last_assistant_message, stop_hook_active: false }, 'stop')
+    const out: any = await quick($, { reply: e.last_assistant_message, stop_hook_active: false, transcript_path: e.transcript_path }, 'stop')
     if (!out?.block) return r
     $.ui.status(SAID.fixed)
     return { ...r, block: String(out.block) }
   })
 
   on('session.start', async ($, e, next) => {
+    // One switch: with no JOURNAL_MCP_DIR in the settings the whole mod is off (no hook, no paragraph, no status line).
+    if (!(await $.env.get('JOURNAL_MCP_DIR'))) return next(e)
     $.ui.status(ACTIVE)
     // Your own start-of-session command, if you want one (a backup, a sync): a JSON array in JOURNAL_ON_SESSION_START,
     // for example ["python3", "/path/backup.py"]; never awaited, so it never slows the start; unset by default.
@@ -218,6 +220,8 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    // One switch: with no JOURNAL_MCP_DIR in the settings the whole mod is off (no hook, no paragraph, no status line).
+    if (!(await $.env.get('JOURNAL_MCP_DIR'))) return next(e)
     $.ui.status(ACTIVE)
     const out = await quick($, { prompt: e.text }, true)
     if (out?.additionalContext && DECIDED.test(out.additionalContext)) $.ui.status(SAID.decided)
@@ -229,6 +233,7 @@ export const register: Register = on => {
 
   on('prompt.compose', async ($, e, next) => {
     const r = await next(e)
+    if (!(await $.env.get('JOURNAL_MCP_DIR'))) return r   // switched off: nothing is added to the instructions
     return { sections: [...r.sections, { id: 'journals:brain', text: BRAIN, scope: 'session' as const }] }
   })
 }

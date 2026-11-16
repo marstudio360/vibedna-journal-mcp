@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "1.6.4"
+VERSION = "2.0.0"
 PRODUCT_SLUG = "journal"
 
 
@@ -2405,7 +2405,7 @@ def _prep_cards(query: str, cards: list) -> list:
 
 def _search_cards(query: str, cards: list, keep: int = 3, judged="ask") -> list:
     """Cards for journal_search: the best few by meaning, without the 'detail' field (it repeats how, status, see and
-    keys). 2026-11-03: a search for "owner_answer_guard" returned twelve cards (office game, logos, US$200 credits),
+    keys). 2026-11-03: a search for "owner_answer_guard" returned twelve cards (a game, logos, account credits),
     ~15 KB per call. Measured against 6 real queries: on-topic cards 0.44-0.56, the worst noise 0.27-0.38; the
     middle overlaps, so the order decides and the floor only drops the clear misses. Unchanged when the meaning
     service does not answer, apart from the detail field."""
@@ -3683,6 +3683,8 @@ def journal_install_rule(scope: str = "global", confirm: bool = False) -> dict:
     scope: "global" → appends to `~/.claude/CLAUDE.md` (applies to all sessions on this machine)
            "project" → appends to `./CLAUDE.md` in current working directory (per-project)
     confirm: must be True to actually write. Default False = preview only.
+    Your file is copied first (CLAUDE.md.bak_journals_<date>_<time> next to it). Only call this when the person
+    asks for it: the install never does.
 
     The rule is idempotent: if it's already in the file, this is a no-op.
     Returns: what would be (or was) written and where.
@@ -3714,7 +3716,12 @@ def journal_install_rule(scope: str = "global", confirm: bool = False) -> dict:
         }
     target.parent.mkdir(parents=True, exist_ok=True)
     separator = "\n\n" if existing.strip() else ""
+    backup = ""
     try:
+        if target.exists():   # your file is copied first: the section is the only thing added, and it can be taken out
+            import shutil
+            backup = str(target.with_name(f"{target.name}.bak_journals_{time.strftime('%Y%m%d_%H%M%S')}"))
+            shutil.copy2(target, backup)
         with target.open("a", encoding="utf-8") as f:
             f.write(separator + _CLAUDE_RULE)
     except Exception as e:
@@ -3722,6 +3729,9 @@ def journal_install_rule(scope: str = "global", confirm: bool = False) -> dict:
     return {
         "ok": True,
         "installed_to": str(target),
+        "backup": backup,
+        "undo": ("install_mod.py --uninstall takes this section back out of ~/.claude/CLAUDE.md; in a project's own "
+                 "CLAUDE.md, delete the section that starts with '# Project Journals: HARD RULE'"),
         "bytes_appended": len(separator) + len(_CLAUDE_RULE),
         "next_step": "Restart any open Claude Code tabs so they re-read CLAUDE.md.",
     }
@@ -3738,7 +3748,8 @@ def journal_install_build_check(confirm: bool = False) -> dict:
     the journals record as already existing for that job, so nobody builds a second tool for the
     same thing. Nothing is blocked: the matches are put in front of your AI as context.
 
-    confirm: False (default) = preview only. True = write it. Idempotent.
+    confirm: False (default) = preview only. True = write it, after copying your settings file
+    (settings.json.bak_journals_<date>_<time>). Idempotent. Only call this when the person asks for it.
     """
     target = Path.home() / ".claude" / "settings.json"
     try:
@@ -3755,12 +3766,18 @@ def journal_install_build_check(confirm: bool = False) -> dict:
         return {"preview": True, "would_write_to": str(target), "would_add_to_hooks.PreToolUse": entry,
                 "instruction": "Call again with confirm=True to write it."}
     hooks.append(entry)
+    backup = ""
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():   # your settings are copied first
+            import shutil
+            backup = str(target.with_name(f"settings.json.bak_journals_{time.strftime('%Y%m%d_%H%M%S')}"))
+            shutil.copy2(target, backup)
         target.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     except Exception as e:
         return {"error": f"Write failed: {e}"}
-    return {"ok": True, "installed_to": str(target), "hook": entry,
+    return {"ok": True, "installed_to": str(target), "hook": entry, "backup": backup,
+            "undo": "install_mod.py --uninstall removes this hook",
             "next_step": "New Claude Code sessions pick it up; open tabs after a restart."}
 
 
@@ -3986,10 +4003,11 @@ def vibedna_info() -> dict:
     """Product info."""
     return {
         "product": "journal",
-        "display_name": "Journals DNA",
+        "display_name": "Neural DNA",
+        "formerly": "Journals DNA (until version 1.6)",
         "vendor": "Vibedna",
         "version": VERSION,
-        "tagline": "Your AI cannot skip your journal.",
+        "tagline": "Memory for your AI.",
         "site": "https://vibedna.ai/journals",
         "connector": "journal_pair · journal_market · journal_get · journal_library",
         "support": "admin@vibedna.ai",

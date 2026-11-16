@@ -1,5 +1,5 @@
 {
-  "description": "Journals DNA: the journal brief before an edit or command, the journal map on each prompt. Replace <PYTHON> and <JOURNAL_MCP_DIR> (see INSTALL.md).",
+  "description": "Neural DNA: the journal brief before an edit or command, the journal map on each prompt. Replace <PYTHON> and <JOURNAL_MCP_DIR> (see INSTALL.md).",
   "hooks": {
     "SessionStart": [
       {

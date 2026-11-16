@@ -30,7 +30,7 @@ class Cursor(Adapter):
     def out_pre(self, deny: str, ctx: str, sid: str):
         if deny:
             return {"permission": "deny", "agent_message": deny,
-                    "user_message": "Journals DNA: reading your notes on this first."}
+                    "user_message": "Neural DNA: reading your notes on this first."}
         text = "\n\n".join(x for x in (self.queue_take(sid), ctx) if x)
         return {"additional_context": text} if text else None
 

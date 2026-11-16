@@ -2042,6 +2042,13 @@ def quick_map_text(m: dict) -> str:
                  "add it with journal_decision_add so every session follows it.")
     if m.get("journals"):
         L.append("- Journals: " + ", ".join(f"{j['journal']} ({j['entries']} entries)" for j in m["journals"]))
+        try:  # the projects around this one (growth.py writes the list); never a reason to fail the map
+            import neighbours
+            near = neighbours.line_for([j["journal"] for j in m["journals"]])
+            if near:
+                L.append(near)
+        except Exception:
+            pass
     for d in m.get("decided", []):
         L.append(f"- DECIDED: {d['what']} ({d['journal']}{', ' + d['date'] if d.get('date') else ''})")
     for x in m.get("exists", []):
@@ -3076,8 +3083,35 @@ FIX_ONLY = ("The owner has ALREADY read your reply. Open those entries first. Th
 def stop_check(call: dict) -> None:
     """The finished reply against the owner brief of the projects in play, before the turn ends (owner 2026-11-03:
     the reply check rode into the NEXT turn, after the owner had already read the repeated proposal)."""
+    if call.get("stop_hook_active"):
+        return
+    # No AI, always on: the reply says done, fixed or live and nothing looked at the result after the last change of
+    # the turn (donecheck.py). It goes back once for the one line that proves it. JOURNAL_DONE_CHECK=off turns it off.
+    try:
+        import donecheck
+        why = donecheck.check(str(call.get("reply") or ""), str(call.get("transcript_path") or ""))
+        if why:
+            try:   # every stop is kept, so right stops and false stops can be counted in real use
+                tail = str(call.get("reply") or "")[-400:]
+                try:   # a log never keeps a key that a reply happened to quote
+                    from default_rules import redact
+                    tail = redact(tail)
+                except Exception:
+                    pass
+                log = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "done_check_log.jsonl"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                         "session": call.get("session_id", ""), "why": why[:300],
+                                         "reply": tail}, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            print(json.dumps({"hookSpecificOutput": {"block": why}}, ensure_ascii=False))
+            return
+    except Exception:
+        pass
     # Opt-in (JOURNAL_REPLY_GATE=on): one stronger-model call per finished reply.
-    if call.get("stop_hook_active") or os.environ.get("JOURNAL_REPLY_GATE", "").lower() not in ("on", "1", "true", "yes"):
+    if os.environ.get("JOURNAL_REPLY_GATE", "").lower() not in ("on", "1", "true", "yes"):
         return
     reply = str(call.get("reply") or "")
     if len(reply) < 200:

@@ -1,4 +1,4 @@
-# Journals DNA mod for GitHub Copilot (VS Code agent, Copilot CLI, Copilot app, cloud agent)
+# Neural DNA mod for GitHub Copilot (VS Code agent, Copilot CLI, Copilot app, cloud agent)
 
 **BETA.** Tested with recorded GitHub Copilot hook payloads only, not yet in a live session. In this app the journals gate only delivers the brief (note mode, the default); the other stops (the default rules pack, your exact rule tests, the paid-run guard, the server flood guard) stay stops.
 

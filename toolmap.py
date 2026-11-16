@@ -766,6 +766,21 @@ def _existing_dir(p: str) -> str:
     return best if best and best.rstrip("/") not in ("", ".") and len(re.split(r"[\\/]", best.rstrip("/"))) > 2 else ""
 
 
+def _temp_dirs() -> list:
+    import tempfile
+    out = {"/tmp", "/var/tmp", "/dev/shm", tempfile.gettempdir()} | {os.environ.get(k, "") for k in ("TMPDIR", "TEMP", "TMP")}
+    return [os.path.realpath(d) for d in out if d]
+
+
+def _is_temp(d: str) -> bool:
+    """The system temp folder, under any of its names (Windows gives it a short and a long one)."""
+    try:
+        r = os.path.normcase(os.path.realpath(d))
+    except (OSError, ValueError):
+        return False
+    return any(r == os.path.normcase(t) for t in _temp_dirs())
+
+
 def _in_tool_source(text: str, cwd: str = "") -> bool:
     """The action works inside a tool's own source (a folder with server.py and an install doc, a skill, a mod):
     improving a tool is the right move, so it is never stopped (2026-10-26: editing the concept table stopped)."""
@@ -780,6 +795,8 @@ def _in_tool_source(text: str, cwd: str = "") -> bool:
         if not d:
             continue
         for _ in range(4):
+            if _is_temp(d):   # the system temp folder itself is never a tool's source: stray files at its top
+                break         # (a server.py and an INSTALL.md) silenced the tools map for everything run under it
             try:
                 names = set(os.listdir(d))
             except OSError:

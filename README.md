@@ -1,12 +1,28 @@
-# Journals DNA
+# Neural DNA
 
-**Your AI cannot skip your journal.**
+**Memory for your AI.**
 
-Journals DNA gives every project one markdown journal (`<PROJECT>_JOURNAL.md`) that your AI reads before it acts and
+Neural DNA was called Journals DNA until version 1.6. Only the name changed: the tools, the folders and the settings are the same.
+
+Your AI cannot skip your journal. Neural DNA gives every project one markdown journal (`<PROJECT>_JOURNAL.md`) that your AI reads before it acts and
 writes to while it works. The next session, or another AI, picks up exactly where the last one stopped, and you can
 share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
+
+## New in 2.0.0
+
+- **A new name.** Journals DNA is now Neural DNA: Memory for your AI. Only the name changed: the 35 tools, the folder
+  layout, the plugin and every `JOURNAL_*` setting are the same, so an install that works today keeps working.
+- **See your memory grow.** `growth.py` turns your journals into one live page: every dated entry is a dot, every
+  journal a cluster, the decisions you kept are bright dots, and a line joins two journals that name each other.
+- **The projects around a project.** The map your AI gets before it acts carries one more line, NEIGHBOURS: the
+  journals around the one in play, why they are near (they name each other, they share a decision, they talk about
+  the same things) and the newest entry of each.
+- **"Done" has to be looked at.** A reply that says done, fixed or live right after a change nothing looked at goes
+  back once for the one line that proves it. No AI involved. `JOURNAL_DONE_CHECK=off` turns it off.
+- **Four moves to install: dry run, install, check, uninstall.** It adds, it never replaces: your rule files and
+  your AI's own memory are listed and left exactly as they are.
 
 ## New in 1.6.0
 
@@ -69,7 +85,7 @@ It runs on your machine. Your journals stay where they are, in plain markdown.
   rule line changed, at the lowest priority.
 - **Old rules carry their newer word.** A rule or decision older than a week is shown with the newer entry that
   changed it, so your AI never follows an outdated rule as current.
-- **A calm status line.** Under your prompt: `Journals DNA · active`, and one plain sentence only when something
+- **A calm status line.** Under your prompt: `Neural DNA · active`, and one plain sentence only when something
   real happens.
 - **Opens in Obsidian.** One command builds a map of all your journals for Obsidian: a START HERE page, a table view
   of every journal, and a canvas by folder. New journals are born with Obsidian properties.

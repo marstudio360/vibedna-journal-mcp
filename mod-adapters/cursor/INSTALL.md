@@ -1,4 +1,4 @@
-# Journals DNA mod for Cursor (IDE agent, CLI, cloud agents)
+# Neural DNA mod for Cursor (IDE agent, CLI, cloud agents)
 
 **BETA.** Tested with recorded Cursor hook payloads only, not yet in a live session. In this app the journals gate only delivers the brief (note mode, the default); the other stops (the default rules pack, your exact rule tests, the paid-run guard, the server flood guard) stay stops.
 

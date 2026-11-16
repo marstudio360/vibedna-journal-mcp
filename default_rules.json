@@ -1,6 +1,6 @@
 {
  "version": "1.0.0",
- "about": "Journals DNA default rules pack: exact tests, no AI, no setup. Read by default_rules.py. JOURNAL_DEFAULT_RULES=off turns the pack off; JOURNAL_DEFAULT_RULES_OFF=id,id turns single rules off.",
+ "about": "Neural DNA default rules pack: exact tests, no AI, no setup. Read by default_rules.py. JOURNAL_DEFAULT_RULES=off turns the pack off; JOURNAL_DEFAULT_RULES_OFF=id,id turns single rules off.",
  "rules": [
   {"id": "secrets", "mode": "stop_once", "on": ["write", "command"],
    "say": "Secret caught: {what} is written into {where} as plain text; keep it in an env var or a secrets manager and read it from there (os.environ, process.env). The same call again passes."},

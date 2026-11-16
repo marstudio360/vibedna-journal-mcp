@@ -1,6 +1,6 @@
 # DEMO JOURNAL
 
-A small journal to try Journals DNA on. It is named DEMO_PROJECT.md so it is not indexed where it sits; copy it
+A small journal to try Neural DNA on. It is named DEMO_PROJECT.md so it is not indexed where it sits; copy it
 into a test folder as DEMO_JOURNAL.md to try the quick map and the Obsidian map (INSTALL.md, step 5).
 
 ## Brain map

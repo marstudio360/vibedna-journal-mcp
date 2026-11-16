@@ -1,16 +1,35 @@
 # Changelog
 
-## 1.6.4 (2026-11-15)
+## 2.0.0 (2026-11-15)
 
-Installer fixes, found by a real install on Windows. No change to the server, the mod or the rules.
-- **Windows:** the installer runs the `claude` command by its full path and reads its output as UTF-8. By its
-  bare name a `claude.cmd` was not found (WinError 2), so the three Claude Code steps and the uninstall
-  failed and had to be run by hand.
-- **Coming from an earlier version:** an older `journal` server entry in a `.mcp.json` or in `~/.claude.json`
-  that would run instead of this version is now named by the dry run and the install, with how to remove it.
-  So is a `JOURNAL_ROOTS` or `JOURNAL_HOME` set only in a server entry, which the mod's hooks cannot see. The
-  installer does not edit those files.
-Same pinned dependencies as 1.6.3.
+Journals DNA is now **Neural DNA: Memory for your AI.** Only the name changed: the 35 tools, the server name, the
+plugin (`journals@journals-dna`), the folder layout and every `JOURNAL_*` setting are the same, so an install that
+works today keeps working. Built on 1.6.3 with the same pinned dependencies.
+
+- **The memory map** (`growth.py`, `growth_page.html`): one page made from your journals. Every dated entry is a dot,
+  every journal a cluster, decisions kept are bright dots, a line joins two journals that name each other. It plays
+  how your memory grew, then stays live (`--serve <port>`, this computer only). `--hide-names` and `--demo-names`
+  make a page with no journal name and no entry title, for showing to other people.
+- **NEIGHBOURS in the quick map** (`neighbours.py`): the journals around the one in play and why (they name each
+  other, they share a decision, they talk about the same things), with the newest entry of each. The list is written
+  by `growth.py` on every build; with no list there is no line.
+- **The done check** (`donecheck.py`, no AI): a reply that says done, fixed or live (English or Spanish) right after
+  a change nothing looked at goes back once for the one line that proves it. Replayed on 1,533 real turns it sent
+  back 26 (1.7%). `JOURNAL_DONE_CHECK=off` turns it off; stops are kept in `~/.journal/done_check_log.jsonl`.
+- **The installer** has four moves: `--dry-run`, install, `--check` (new) and `--uninstall`. It lists your own rule
+  files and your AI's memory and leaves them exactly as they are: it adds, it never replaces. The dry run now prints
+  the whole footprint: every change, every hook with what it reads and what it can do, and the one command that
+  removes it all. INSTALL.md opens with the same block.
+- **`MANIFEST.sha256`**: the SHA-256 of every file of the package; `install_mod.py --check` compares them.
+- **Fix (Windows):** the installer runs the `claude` command by its full path and reads its output as UTF-8. By its
+  bare name a `claude.cmd` was not found, so the three Claude Code steps, the check and the uninstall failed.
+- **Fix:** an older `journal` server entry in a `.mcp.json` or in `~/.claude.json` that would run instead of this
+  version is now named by the dry run, the install and the check, with how to remove it; so is a `JOURNAL_ROOTS` or
+  `JOURNAL_HOME` set only in a server entry, which the mod's hooks cannot see.
+- The invented names of `--demo-names` no longer include a real platform's name.
+- The mod's Stop hook now passes the session transcript path to the hook (the done check reads it).
+- **Fix:** stray files at the top of the system temp folder (a `server.py` next to an `INSTALL.md`) no longer make
+  every command run under it look like work on a tool's own source, which kept the tools map silent there.
 
 ## 1.6.3 (2026-11-12)
 

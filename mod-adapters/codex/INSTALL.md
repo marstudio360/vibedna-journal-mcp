@@ -1,4 +1,4 @@
-# Journals DNA mod for Codex (CLI and desktop app)
+# Neural DNA mod for Codex (CLI and desktop app)
 
 **BETA.** Tested live in Codex: the hooks run and the model follows the brief. In this app the journals gate only delivers the brief (note mode, the default); the other stops (the default rules pack, your exact rule tests, the paid-run guard, the server flood guard) stay stops.
 

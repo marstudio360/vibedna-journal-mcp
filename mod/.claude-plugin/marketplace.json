@@ -4,14 +4,14 @@
     "name": "Vibedna"
   },
   "metadata": {
-    "description": "Journals DNA: your AI cannot skip your journal."
+    "description": "Neural DNA: Memory for your AI."
   },
   "plugins": [
     {
       "name": "journals",
       "source": "./journals",
-      "description": "Your AI cannot skip your journal.",
-      "version": "1.6.4"
+      "description": "Memory for your AI: it cannot skip your journal.",
+      "version": "2.0.0"
     }
   ]
 }

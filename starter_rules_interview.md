@@ -5,11 +5,11 @@ written into a file or a commit, a destructive delete, `git reset --hard` over u
 `DELETE` without `WHERE`, a force push to main or master, and overwriting or deleting `.env` and key files. It stops
 publishing to production, spending money and messaging customers or posting until your latest message says yes.
 
-The pack cannot know YOUR money, YOUR outward actions or YOUR production branch. The start prompt asks three
+The pack cannot know YOUR money, YOUR outward actions or YOUR production branch. Your AI asks three
 questions, once, and the AI writes the answers where the mod already reads them. Nothing here needs a judge or an
 AI call afterwards: the lines below are read on every command, for free.
 
-## The three questions (the start prompt asks them in this order, one message)
+## The three questions (your AI asks them in this order, in one message; INSTALL.md step 4b)
 
 1. **What costs you money?** Paid APIs, scripts or tools that spend per run, cloud machines, ad budgets.
 2. **What must never go out without your yes?** Mails, posts, messages to customers, price changes, anything public.
@@ -70,8 +70,9 @@ the journal home (`~/.journal/` unless `JOURNAL_HOME` is set), which the mod che
 
 ## Yes words
 
-A yes is any of: yes, yeah, yep, go ahead, do it, approved, ship it, publish it, send it, go for it, confirmed,
-proceed. Add your own words, in any language, in `JOURNAL_APPROVAL_WORDS` (comma-separated), for example
+For the default rules and your `yes_patterns.txt`, a yes is any of: yes, yeah, yep, go ahead, do it, approved, ship
+it, publish it, send it, go for it, confirmed, proceed. For a paid run in `paid_patterns.txt` it is one of four: yes,
+go ahead, do it, approved. Add your own words, in any language, in `JOURNAL_APPROVAL_WORDS` (comma-separated), for example
 `JOURNAL_APPROVAL_WORDS=oui,si,vamos`. The yes must be in the user's latest message.
 
 ## Turning rules off
