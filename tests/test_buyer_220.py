@@ -29,7 +29,8 @@ def test_the_five_checks_are_in_the_package_and_wired():
     # the order at the end of a turn: owner calls and learn, exists on the reply, then the done check
     assert stop.index("import owner_calls") < stop.index("existsprobe.reply_check") < stop.index("import donecheck")
     reply = src[src.index("def reply_check(call: dict)"):src.index("def stop_check(call: dict)")]
-    assert "_moved_claims(text)" in reply and "verdictprobe.reply_check(text, folders)" in reply
+    assert "_moved_claims(text)" in reply and "verdictprobe.reply_hits(text, folders)" in reply
+    assert '"ruled_out": [verdictprobe.judge_item(h) for h in ruled_hits]' in reply   # 2.2.2: the judge reads the note
     assert '"moved": moved' in reply and "CHECK THIS NAME IN YOUR LAST REPLY" in reply
     assert "existsprobe.block(q_msg)" in src
     assert hasattr(quickmap, "_moved_claims") and "another" in quickmap._NOT_A_PLACE

@@ -73,3 +73,19 @@ def test_a_line_past_the_cap_is_kept_unasked(monkeypatch, tmp_path):
     lines = [SHIPPED.replace("- key", f"- key{i}") for i in range(5)]
     out = A.keep_right({"shipped": lines}, REPLY)
     assert out["shipped"] == lines[A.MAX_AT_ONCE:] and len(seen) == A.MAX_AT_ONCE
+
+
+def test_a_ruled_out_note_is_its_own_kind_of_case(monkeypatch, tmp_path):
+    """2026-11-20: the note "RULED OUT BEFORE" is a word match too; the judge reads it in the same round."""
+    case = {"kind": "ruled_out", "reply": "2. One ladder line on the plans page: the free one, the paid one, the plan.",
+            "alarm": "The reply proposes something the journals record as withdrawn, rejected or ruled out.",
+            "entry": "QC_JOURNAL.md (2026-10-29 00:53) says: Room reel shown reviewed though the owner rejected its lotus ending",
+            "hit": {"line": "2. One ladder line"}}
+    seen = _judge(monkeypatch, tmp_path, lambda p: '{"alarm": "wrong", "why": "another brand, another thing"}')
+    assert A.keep_right({"shipped": [], "ruled_out": [case]}, "the reply") == {"shipped": [], "ruled_out": []}
+    assert "a proposal of something already ruled out" in seen[0] and "lotus ending" in seen[0]
+    assert "Reply sentence: 2. One ladder line" in seen[0]
+    _judge(monkeypatch, tmp_path, lambda p: '{"alarm": "right", "why": "the same idea"}')
+    assert A.keep_right({"ruled_out": [case]}, "the reply") == {"ruled_out": [case]}
+    monkeypatch.setenv("JOURNAL_ALARM_JUDGE", "off")
+    assert A.keep_right({"ruled_out": [case]}, "the reply") == {"ruled_out": [case]}    # no judge: the note stays

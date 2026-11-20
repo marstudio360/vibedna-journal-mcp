@@ -139,6 +139,14 @@ def verdicts_for(line: str, folders: set | None = None, cap: int = 2, before: st
     ideas = _ideas(line)
     if len(ideas) < 4:
         return []
+    # A line that names a product, a project or a company is only about a verdict that names one of them too (in the
+    # journal's name, the entry title or the line itself). 2026-11-20: a plans page sentence that named one product
+    # was matched to a content calendar line of another brand on "day, free, loads, page, ships". Measured on the 18
+    # notes logged until then: 7 dropped, all wrong ones; the real case names no product and is kept.
+    try:
+        named = {Q._fold(e["name"]) for e in Q._entities_in(line) if len(e.get("name") or "") >= 4}
+    except Exception:
+        named = set()
     ors = ["(" + " OR ".join(f'"{p}"*' for p in sorted(g["phr"])) + ")" for g in ideas[:14]]
     pairs = " OR ".join(f"({a} AND {b})" for i, a in enumerate(ors) for b in ors[i + 1:])
     c = Q._conn()
@@ -161,11 +169,14 @@ def verdicts_for(line: str, folders: set | None = None, cap: int = 2, before: st
         inside = bool(folders) and Q._fold(str(Path(path).parent)) in folders
         if folders and not inside:
             continue
+        about = Q._fold(names.get(path, "").replace("_", " ") + " " + (heading or ""))
         for jl in (body or "").split("\n"):
             if not VERDICT.search(jl):
                 continue
             line_cov = E._covers(jl, ideas)
             if len(line_cov) < 4:
+                continue
+            if named and not any(n in about or n in Q._fold(jl) for n in named):
                 continue
             for s in re.split(r"(?<=[.!?])\s+", jl):
                 fs = Q._fold(s)
@@ -192,12 +203,12 @@ def verdicts_for(line: str, folders: set | None = None, cap: int = 2, before: st
     return res
 
 
-def reply_check(reply: str, folders: set | None = None, before: str = "") -> str:
-    """'' when the reply proposes nothing the journals ruled out; else the correction request."""
+def reply_hits(reply: str, folders: set | None = None, before: str = "") -> list[dict]:
+    """The proposal lines of the reply that the journals ruled out, at most two: [{"line", "hits"}]."""
     # No project scope (the session read no journal): silent. Unscoped it fired 26 times on the same 2,355 replies
     # and missed the real case; a session that works on a project has read its journal by the time it proposes.
     if os.environ.get("JOURNAL_VERDICT_PROBE", "on") == "off" or not folders:
-        return ""
+        return []
     bad = []
     for ln in proposal_lines(reply):
         try:
@@ -205,13 +216,34 @@ def reply_check(reply: str, folders: set | None = None, before: str = "") -> str
         except Exception:
             continue
         if hits:
-            rec = " | ".join(f"{h['when']} ({h['journal']}:{h['line']}): \"{h['sentence']}\"" for h in hits)
-            bad.append(f'- your line: "{ln[:200]}"\n  the journals record: {rec}')
+            bad.append({"line": ln, "hits": hits})
         if len(bad) >= 2:
             break
+    return bad
+
+
+def judge_item(hit: dict) -> dict:
+    """One ruled-out note as a case for the alarm judge (alarmjudge.py), which reads it before it is said."""
+    h = hit["hits"][0]
+    return {"kind": "ruled_out", "reply": hit["line"][:600], "hit": hit,
+            "alarm": "The reply proposes something the journals record as withdrawn, rejected or ruled out.",
+            "entry": f"{h['journal']} ({h['when']}) says: {h['sentence']}"}
+
+
+def render(bad: list[dict]) -> str:
+    """'' for no hits; else the correction request."""
     if not bad:
         return ""
+    rows = []
+    for b in bad:
+        rec = " | ".join(f"{h['when']} ({h['journal']}:{h['line']}): \"{h['sentence']}\"" for h in b["hits"])
+        rows.append(f'- your line: "{b["line"][:200]}"\n  the journals record: {rec}')
     return ("RULED OUT BEFORE (no AI check of your last reply): it proposed something the journals record as withdrawn, "
-            "rejected or ruled out:\n" + "\n".join(bad) + "\nOpen that entry BEFORE you build or defend the proposal. "
+            "rejected or ruled out:\n" + "\n".join(rows) + "\nOpen that entry BEFORE you build or defend the proposal. "
             "If it is the same thing, tell the owner first, in one or two lines, when and why it was ruled out, and "
             "build it only if something new reopens it. If it is about something else, ignore this note.")
+
+
+def reply_check(reply: str, folders: set | None = None, before: str = "") -> str:
+    """'' when the reply proposes nothing the journals ruled out; else the correction request."""
+    return render(reply_hits(reply, folders, before))

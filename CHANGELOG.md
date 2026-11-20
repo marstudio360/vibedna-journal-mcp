@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.2 (2026-11-20)
+
+Built on 2.2.1 with the same pinned dependencies. Nothing to set up again.
+
+- **The verdict check** (`verdictprobe.py`): a proposal line that names a product, a project or a company only
+  matches a ruled-out sentence whose journal, entry title or line names one of them too. Of the 18 notes our own copy
+  had logged, 7 fell here, all wrong ones; the case the check was built for names no product and is found as before.
+- **The alarm judge** (`alarmjudge.py`, only with the judge on): the "ruled out before" note is read by the judge in
+  the same round as the other reply alarms, as its own kind of case ("a proposal of something already ruled out").
+  On those 18 logged pairs the verdict model cancelled 16 of 16 wrong notes and kept 2 of 2 right ones on two runs.
+  It runs after the reply is shown, so nobody waits for it. Without a judge the note is said as before.
+
 ## 2.2.1 (2026-11-20)
 
 Built on 2.2.0 with the same pinned dependencies. Nothing to set up again.

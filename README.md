@@ -10,6 +10,14 @@ share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
 
+## New in 2.2.2
+
+- **Fewer wrong "ruled out before" notes.** That note could match a proposal to an entry of another project that only
+  shared everyday words. Now a proposal line that names a product, a project or a company only matches a verdict
+  that names one of them too (exact, no AI). And with the judge on, the alarm judge reads the note before it is
+  said, like the other reply alarms: on the 18 notes our own copy had logged, it cancelled the 16 wrong ones and
+  kept the 2 right ones on two runs. Nothing to set up; nothing else changed.
+
 ## New in 2.2.1
 
 - **The installer says so when there is no keyboard.** `install_mod.py` with no flag, run by an AI in a shell that

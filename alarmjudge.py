@@ -49,6 +49,12 @@ KIND_RULES = {
                  "about the shutdown itself."),
     "shipped": ("This alarm is of the kind \"listed as still to do, but already done\". It is RIGHT only when the entry "
                 "records as done the SAME piece the reply lists as pending (the same thing and the same version)."),
+    "ruled_out": ("This alarm is of the kind \"a proposal of something already ruled out\". It is RIGHT only when the "
+                  "entry withdraws, rejects or rules out the SAME idea the reply line proposes (the same change to the "
+                  "same thing), even in other words or in another language. It is WRONG when the entry rejects "
+                  "something else (another product, page, file, clip, design or version), when the two only share "
+                  "everyday words, or when the reply line is not a proposal (a report of work done, a finding, a "
+                  "question, quoted copy)."),
 }
 MAX_AT_ONCE = 3
 TIMEOUT = float(os.environ.get("JOURNAL_ALARM_JUDGE_TIMEOUT") or 9)
@@ -127,7 +133,10 @@ def _sentence_with(reply: str, name: str) -> str:
 
 
 def item_of(line: str, kind: str, reply: str) -> dict:
-    """One alarm line of the reply check ("- <name>: <what it says>, but <the entry>") as a case for the judge."""
+    """One alarm line of the reply check ("- <name>: <what it says>, but <the entry>") as a case for the judge.
+    A check that already has its case as a dict (the ruled-out note) passes it as it is."""
+    if isinstance(line, dict):
+        return line
     m = re.match(r"-\s*([^:]{1,80}):\s*(.*)", line, re.S)
     name, rest = (m.group(1).strip(), m.group(2)) if m else ("", line)
     said = re.search(r'still to do \("(.+?)"\)', rest, re.S)

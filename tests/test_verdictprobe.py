@@ -88,3 +88,26 @@ def test_switch_off(monkeypatch):
     monkeypatch.setenv("JOURNAL_VERDICT_PROBE", "off")
     assert V.write_hint("the idea is withdrawn and stays withdrawn for good") == ""
     assert V.reply_check(REPLY, {"x"}) == ""
+
+
+def test_a_line_that_names_a_product_needs_a_verdict_that_names_it_too(tmp_path, monkeypatch):
+    """2026-11-20: a plans page line that named a product was matched to a content calendar line of another brand
+    on everyday words (day, free, loads, page, ships). A line that names no product is read as before."""
+    aa = str(tmp_path / "TONE GARDEN" / "TONE_GARDEN_JOURNAL.md")
+    _index(tmp_path, monkeypatch, [
+        (aa, 11274, "2026-11-05 19:17 [ventas] PAYPAL IN FB/IG MEASURED + EMAIL-STEP LEADS STAGE", BULLET)])
+    folders = {Q._fold(str(Path(aa).parent))}
+    monkeypatch.setattr(Q, "_entities_in",
+                        lambda text, kinds=(): [{"name": "Shopsite Pro"}] if "Shopsite Pro" in text else [])
+    named = REPLY.replace("3. Para quien entra", "3. En Shopsite Pro, para quien entra")
+    assert V.reply_check(named, folders) == ""        # the journal, the entry title and the line never name it
+    hits = V.reply_hits(REPLY, folders)               # no product named: found as before
+    assert len(hits) == 1 and hits[0]["line"].startswith("3. Para quien entra")
+    case = V.judge_item(hits[0])                      # and it goes to the alarm judge as its own kind of case
+    assert case["kind"] == "ruled_out" and case["reply"].startswith("3. Para quien entra") and case["hit"] is hits[0]
+    assert case["entry"].startswith("TONE_GARDEN_JOURNAL.md (2026-11-05 19:17) says:") and "withdrawn" in case["entry"]
+    assert V.render(hits) == V.reply_check(REPLY, folders) and V.render([]) == ""
+    (tmp_path / "b").mkdir()
+    both = BULLET.replace('the "open in Safari" idea', 'for Shopsite Pro the "open in Safari" idea')
+    _index(tmp_path / "b", monkeypatch, [(aa, 11274, "2026-11-05 19:17 [ventas] PAYPAL IN FB/IG MEASURED", both)])
+    assert "RULED OUT BEFORE" in V.reply_check(named, folders)   # the entry names the product too

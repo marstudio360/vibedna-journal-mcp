@@ -1,4 +1,4 @@
-# Install Neural DNA 2.2.1
+# Install Neural DNA 2.2.2
 
 **Neural DNA: Memory for your AI.** Neural DNA was called Journals DNA until version 1.6; the tool names, the folder layout and every setting are the same, so an install that works today keeps working. Your AI cannot skip your journal: that is still what it does. This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
@@ -551,6 +551,13 @@ Your journals, your rule files and your AI's own memory are never changed by ins
 
 # What changed in each version
 The full list is in CHANGELOG.md.
+
+## New in 2.2.2
+- **Fewer wrong "ruled out before" notes.** That note could match a proposal to an entry of another project that only
+  shared everyday words. Now a proposal line that names a product, a project or a company only matches a verdict
+  that names one of them too (exact, no AI). And with the judge on, the alarm judge reads the note before it is
+  said, like the other reply alarms: on the 18 notes our own copy had logged, it cancelled the 16 wrong ones and
+  kept the 2 right ones on two runs. Nothing to set up; nothing else changed.
 
 ## New in 2.2.1
 - **The installer says so when there is no keyboard.** `install_mod.py` with no flag, run by an AI in a shell that

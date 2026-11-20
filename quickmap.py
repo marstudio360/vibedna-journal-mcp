@@ -1601,11 +1601,20 @@ def reply_check(call: dict) -> None:
     # These three match words, so now and then they raise an alarm about an entry that only shares a word with the
     # reply. With the judge on, it reads each alarm before it is said and cancels the wrong ones (alarmjudge.py). This
     # check runs after the reply is shown and nobody waits for it; it has 15 s in all, so the judge gets what is left.
+    # The ruled-out note (below) is a word match too, and since 2026-11-20 the judge reads it in the same round.
+    ruled_hits = []
+    try:
+        import verdictprobe
+        ruled_hits = verdictprobe.reply_hits(text, folders)
+    except Exception:
+        ruled_hits = []
     try:
         import alarmjudge
-        kept = alarmjudge.keep_right({"shipped": shipped, "shutdown": claims, "moved": moved}, text,
+        kept = alarmjudge.keep_right({"shipped": shipped, "shutdown": claims, "moved": moved,
+                                      "ruled_out": [verdictprobe.judge_item(h) for h in ruled_hits]}, text,
                                      str(call.get("session_id") or ""), budget=13 - (time.time() - t_start))
         shipped, claims, moved = kept["shipped"], kept["shutdown"], kept["moved"]
+        ruled_hits = [it["hit"] for it in kept["ruled_out"]]
     except Exception:
         pass
     # A proposal of something the journals ruled out (2026-11-14: an "open in your browser" pay button was proposed,
@@ -1613,8 +1622,7 @@ def reply_check(call: dict) -> None:
     # "lo que cambiaria" and the verdict had no card). No AI, a note only (verdictprobe.py).
     ruled = ""
     try:
-        import verdictprobe
-        ruled = verdictprobe.reply_check(text, folders)
+        ruled = verdictprobe.render(ruled_hits)
         if ruled:
             try:
                 log = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "verdict_check_log.jsonl"
