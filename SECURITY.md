@@ -39,6 +39,10 @@ meaning, whose service listens on `127.0.0.1` only, or run `growth.py --serve <p
   the one Claude Code passes to the Stop hook, to see which tool calls the turn made. It reads tool names, file
   paths and commands, locally.
 
+- The alarm judge (only with the judge on, `JOURNAL_ALARM_JUDGE=off`) sends to your own AI, through the `claude`
+  command already logged in on your machine, one sentence of the finished reply, the alarm and the title or sentence
+  of the journal entry the alarm cites. Nothing goes anywhere else.
+
 ## What it writes
 
 - Journal files you ask it to create or update (`journal_create`, `journal_append`, `journal_update_section`,
@@ -49,6 +53,8 @@ meaning, whose service listens on `127.0.0.1` only, or run `growth.py --serve <p
 - `~/journal-outbox/` (or `JOURNAL_OUTBOX`), only when an append targets a read-only journal.
 - `~/.journal/growth/` (the memory map page, `neighbours.json`, `neighbours_meaning.json`), only when you run
   `growth.py`. A page made with `--hide-names` or `--demo-names` carries no journal name and no entry title.
+- `~/.journal/alarm_judge_log.jsonl`: one line per alarm the judge read (time, session id, the kind of check, the
+  verdict and its reason, the first 300 characters of the reply sentence and of the entry).
 - `~/.journal/done_check_log.jsonl`: one line per reply the done check sent back (time, session id, the reason and
   the last 400 characters of the reply, with keys and tokens replaced by `<redacted>`).
 - `~/.claude/CLAUDE.md` or `./CLAUDE.md`, only with `journal_install_rule(..., confirm=True)` (your file is copied first, and the uninstall takes the section back out of `~/.claude/CLAUDE.md`); `~/.claude/settings.json`,

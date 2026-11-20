@@ -10,6 +10,20 @@ share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
 
+## New in 2.1.0
+
+- **Your message reaches your AI sooner.** With the judge on, the questions the mod asks it before each message now
+  start lean and run side by side instead of one after the other. On our own machine a message waited about 9.5 s
+  for its map before and about 3 s now, with the same map.
+- **Fewer false alarms.** The checks of a finished reply match words, so now and then they flagged an entry that only
+  shared a word with the reply. With the judge on, it now reads each alarm before it is said and cancels the wrong
+  ones. It runs after the reply is shown, so you wait nothing for it.
+- **A thing you ask about keeps its map.** "Why is it not on X?" is a question about X: its map now comes with that
+  message, and what you already decided about a thing you name always comes with it.
+- **A map that is late says so.** If the map of a message cannot be made in time, your AI is told and looks it up,
+  instead of answering without it.
+- **Journal tools through a connector count.** A journal read or save made through a connector is now seen as one.
+
 ## New in 2.0.0
 
 - **A new name.** Journals DNA is now Neural DNA: Memory for your AI. Only the name changed: the 35 tools, the folder

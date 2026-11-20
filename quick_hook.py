@@ -182,6 +182,15 @@ def _save(f, seen: dict):
         pass
 
 
+def _jtool(name) -> str:
+    """The journal tool's own name, whatever server carries it: "mcp__journal__journal_quick" and a connector's
+    "mcp__<server>__local_journal_journal_quick" are both "journal_quick" (reads made through a connector were never
+    counted as journal reads)."""
+    last = str(name or "").rsplit("__", 1)[-1]
+    m = re.search(r"journal_(?:read_section|read|handoff_brief|search|quick)$", last)
+    return m.group(0) if m else last
+
+
 def jkey(name: str) -> str:
     """One key per journal from a file name, a path or a short name: "TONE_GARDEN_JOURNAL.md", "TONE GARDEN"
     and "C:/x/TONE_GARDEN_JOURNAL.md" all give "tonegarden"."""
@@ -226,7 +235,7 @@ def record_read(call: dict):
         else:
             keys |= {jkey(x) for x in names}  # an older mod sent the whole tool result text
     else:
-        tool = str(ti.get("journal_tool") or "").rsplit("__", 1)[-1]
+        tool = _jtool(ti.get("journal_tool"))
         args = ti.get("args") or {}
         text = str(ti.get("text") or "")
         if tool in ("journal_read", "journal_read_section", "journal_handoff_brief"):
@@ -260,7 +269,7 @@ def record_read(call: dict):
     # Direct reads only (not every journal a search result happened to list) say which project the session is on:
     # the owner brief follows them (2026-11-03: a code_sync search listed AI_TEAM and DIRECTOR journals and their
     # briefs replaced Oddsboard's on "bueno como va").
-    direct = "journal_tool" not in ti or str(ti.get("journal_tool") or "").rsplit("__", 1)[-1] in (
+    direct = "journal_tool" not in ti or _jtool(ti.get("journal_tool")) in (
         "journal_read", "journal_read_section", "journal_handoff_brief")
     if direct and ok:
         jc = seen.setdefault("jc", {})

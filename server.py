@@ -133,7 +133,7 @@ _SITE = (os.environ.get("VIBEDNA_SITE") or "https://vibedna.ai").rstrip("/")
 
 # This copy's version. Bump it when packaging; check_for_update compares it against
 # what the site currently publishes, so an installed copy can tell it is behind.
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 PRODUCT_SLUG = "journal"
 
 

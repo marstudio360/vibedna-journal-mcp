@@ -11,7 +11,7 @@
       "name": "journals",
       "source": "./journals",
       "description": "Memory for your AI: it cannot skip your journal.",
-      "version": "2.0.0"
+      "version": "2.1.0"
     }
   ]
 }

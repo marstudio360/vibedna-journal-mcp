@@ -1053,8 +1053,15 @@ def _state_sentence(body: str, anchor: str = "") -> str:
     return ("..." if a else "") + s[a:a + 90].rstrip(" :;,(")
 
 
+# An entry that records a problem or a talk is never a delivery, whatever word its title carries (a real false
+# alarm: an [incident] about a secret key typed in a command was shown as "the journals say it shipped").
+_NOT_A_SHIP_TAG = re.compile(r"^\s*\[(?:incident|mod-miss|miss|bug|brainstorm|idea|plan|todo)\]", re.I)
+
+
 def _is_ship_heading(heading: str) -> bool:
     h = _HEAD_DATE.sub("", heading or "")
+    if _NOT_A_SHIP_TAG.search(h):
+        return False
     return bool(_SHIP_HEAD_TAG.search(h)) or (bool(_SHIP_HEAD_WORD.search(h)) and not _NOT_SHIPPED.search(h))
 
 
@@ -1271,7 +1278,9 @@ def _pending_lines(text: str) -> list[str]:
     return out
 
 
-_NEGATED = re.compile(r"\bnot\b|\bno\b|\bnever\b|\bwithout\b|\bpending\b")
+# Its own name: a second pattern called _NEGATED, written later for the prompt map further down this file, replaced
+# this one for every caller, so the "the ship itself says it is not done" test below never matched.
+_NOT_NEAR = re.compile(r"\bnot\b|\bno\b|\bnever\b|\bwithout\b|\bpending\b")
 
 
 def _last_not_done(group: list) -> str:
@@ -1390,7 +1399,7 @@ def _shipped_vs_pending(text: str, folders: set = None) -> list[str]:
             # pending" of 10-26 outlives the "Box employees get Webweave" ship of 10-24.
             last_open = _last_not_done([name] if " " in name else g) if ships else ""
             for sh in ships:
-                if sh["when"] <= last_open or _near(_NEGATED, nrx, _fold(sh.get("ctx") or ""), 40, after=True):
+                if sh["when"] <= last_open or _near(_NOT_NEAR, nrx, _fold(sh.get("ctx") or ""), 40, after=True):
                     continue   # older than an open claim, or the ship itself says this thing is not done
                 if folders and _fold(str(Path(sh.get("path") or "").parent)) not in folders:
                     continue   # another project's ship of a thing with the same name
@@ -1495,6 +1504,7 @@ def _shutdown_claims(text: str, days: int = 10) -> list[str]:
 
 
 def reply_check(call: dict) -> None:
+    t_start = time.time()
     text = str(call.get("reply") or "")[:8000]
     if len(text) < 40:
         return
@@ -1516,6 +1526,16 @@ def reply_check(call: dict) -> None:
         claims = _shutdown_claims(text)
     except Exception:
         claims = []
+    # These two match words, so now and then they raise an alarm about an entry that only shares a word with the
+    # reply. With the judge on, it reads each alarm before it is said and cancels the wrong ones (alarmjudge.py). This
+    # check runs after the reply is shown and nobody waits for it; it has 15 s in all, so the judge gets what is left.
+    try:
+        import alarmjudge
+        kept = alarmjudge.keep_right({"shipped": shipped, "shutdown": claims}, text,
+                                     str(call.get("session_id") or ""), budget=13 - (time.time() - t_start))
+        shipped, claims = kept["shipped"], kept["shutdown"]
+    except Exception:
+        pass
     parts = []
     if claims:
         parts.append("CHECK THIS CLAIM IN YOUR LAST REPLY: you said something uses or runs on these, and a recent entry "
@@ -2071,6 +2091,37 @@ def quick_map_text(m: dict) -> str:
 
 _WRITE_CMD = re.compile(r"(?<![\w./~\\-])(ssh|scp|rsync|sed\s+-i|tee|cp|mv|crontab|systemctl|git\s+push)(?![\w./\\-])|(?<![0-9&>])>{1,2}(?!&)\s*(?!/dev/null\b|\$null\b|nul\b)[^\s&|;]")
 _FILE_TOKEN = re.compile(r"[\w./\\~-]*?([A-Za-z][\w-]{2,}\.(?:py|sh|js|ts|tsx|mjs|json|toml|yaml|yml|service|conf))\b")
+
+
+def _ruled_block(ruled: dict, shown_text: str) -> str:
+    """The Decided cards that name a thing the owner's message names, when the map of that name did not make it into
+    the message's map. A real miss: the owner asked why a page was "not on" a board he named; the map of that name
+    opens with unrelated ship lines, so the relevance filter dropped it whole, and with it the card that says what
+    that board is now. The session answered from an older line of another journal and the card only surfaced one
+    message later. A card the owner decided about the name he just used is never noise. At most 2 names and 2 cards
+    each, newest first."""
+    folded = _fold(shown_text)
+    lines = []
+    for w, cards in list(ruled.items()):
+        if not cards or f'quick map for "{w}"' in folded:
+            continue
+        fresh = [c for c in sorted(cards, key=lambda c: str(c.get("date") or ""), reverse=True)
+                 if _fold(str(c.get("what") or ""))[:80] not in folded]
+        seen_what = set()
+        for c in fresh:
+            k = _fold(str(c.get("what") or ""))[:80]
+            if k in seen_what:
+                continue   # the same card kept in two journals
+            seen_what.add(k)
+            lines.append(f'- "{w}", DECIDED {c.get("date") or ""} ({c.get("journal") or ""}): {str(c.get("what") or "")[:420]}')
+            if len(seen_what) >= 2:
+                break
+        if len({ln.split(",")[0] for ln in lines}) >= 2:
+            break
+    if not lines:
+        return ""
+    return ("DECIDED ABOUT WHAT THE MESSAGE NAMES (the owner already ruled on it; read the card before you answer "
+            "about it):\n" + "\n".join(lines))
 
 
 def _quick_seen(session: str) -> tuple[Path, dict]:
@@ -2772,6 +2823,21 @@ PROMPT_MEANING_FLOOR = float(os.environ.get("JOURNAL_PROMPT_MEANING_FLOOR") or 0
 _NEGATED = re.compile(r"\b(no|not|sin|ni|nunca|never|without)\b(?:\W+\w+){0,3}?\W+$", re.I)
 
 
+_ASKS = re.compile(r"\W*(?:(?:y|pero|and|but|o sea|bro|man)\W+){0,2}(?:por ?que|porque|why|como|how|donde|where|"
+                   r"cuando|when|cual|which|what)\b")
+
+
+def _asked_about(folded: str, i: int) -> bool:
+    """The name at position i sits in a question: "why is the review page NOT on the board?" asks about that name, it
+    does not send it away (a real miss: the "no" before the name took its map out of the very message that asked
+    about it, and the card that answered arrived one message late)."""
+    start = max(folded.rfind(ch, 0, i) for ch in "?.!\n") + 1
+    ends = [p for p in (folded.find(ch, i) for ch in "?.!\n") if p != -1]
+    end = min(ends) if ends else len(folded) - 1
+    seg = folded[start:end + 1]
+    return seg.rstrip().endswith("?") or bool(_ASKS.match(seg))
+
+
 def _drop_negated_names(q: str) -> str:
     """Takes out of a message the names it negates, before the meaning search."""
     return re.sub(r"(\b(?:no|not|sin|ni|nunca|never|without)\b(?:\W+[a-záéíóúñ]+){0,3}\W+)[A-Z][\w.-]+", r"\1", q)
@@ -3048,26 +3114,59 @@ def _tool_cards_block(msg: str, limit: int = 3) -> str:
 def _owner_brief_block(seen: dict, n: int, msg: str, names: set, shown: str = "") -> str:
     """The owner brief of each project in play: whole the first time in a session and every BRIEF_EVERY messages;
     in between, only the lines the judge says apply to this message."""
+    slots = _brief_slots(seen, n, names)
+    return _brief_text(slots, _brief_picks(msg, slots), shown)
+
+
+def _brief_slots(seen: dict, n: int, names: set = frozenset()) -> list:
+    """(project, its brief lines, whole brief this time?) for each project in play, in the order they are shown.
+    Marks in `seen` the message at which a whole brief was given."""
     import owner_brief
-    import judge
-    out = []
+    slots = []
     for p in _projects_in_play(seen, names):
         lines = owner_brief.lines_for(p)
-        # A line the map of this message already shows (a Decided card) is not repeated.
-        low = shown.lower()
-        lines = [ln for ln in lines
-                 if not (ln.split("] ", 1)[-1][:60].lower() in low and len(ln.split("] ", 1)[-1]) >= 20)]
         if not lines:
             continue
         k = "ob:" + owner_brief._key(p)
         last = seen.get(k)
-        if last is None or n - int(last) >= owner_brief.BRIEF_EVERY:
+        whole = last is None or n - int(last) >= owner_brief.BRIEF_EVERY
+        if whole:
             seen[k] = n
-            out.append(owner_brief.brief_text(p, lines))
-            continue
-        pick = judge.judge(msg, lines, task=owner_brief.PROMPT_TASK) if len(msg.strip()) >= 3 else None
-        if pick:
-            out.append(owner_brief.brief_text(p, [lines[i] for i in pick], partial=True))
+        slots.append((p, lines, whole))
+    return slots
+
+
+def _brief_picks(msg: str, slots: list) -> dict:
+    """{slot number: the line numbers the judge says apply to the message}. One judge call per project that is not
+    getting its whole brief, side by side: one after the other, a session with two projects in play held every owner
+    message for that many calls before the AI could start. Touches nothing shared, so the prompt map starts it at once
+    and goes on with its own work (see quick_hook)."""
+    import owner_brief
+    import judge
+    ask = [i for i, (_, _, whole) in enumerate(slots) if not whole] if len(msg.strip()) >= 3 else []
+    if not ask:
+        return {}
+    if len(ask) == 1:
+        return {ask[0]: judge.judge(msg, slots[ask[0]][1], task=owner_brief.PROMPT_TASK)}
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(min(4, len(ask))) as pool:
+        return dict(zip(ask, pool.map(lambda j: judge.judge(msg, slots[j][1], task=owner_brief.PROMPT_TASK), ask)))
+
+
+def _brief_text(slots: list, picks: dict, shown: str = "") -> str:
+    """The brief blocks. A line the map of this message already shows (a Decided card) is not repeated."""
+    import owner_brief
+    low = shown.lower()
+
+    def fresh(ln: str) -> bool:
+        body = ln.split("] ", 1)[-1]
+        return not (body[:60].lower() in low and len(body) >= 20)
+
+    out = []
+    for i, (p, lines, whole) in enumerate(slots):
+        keep = [ln for ln in (lines if whole else [lines[j] for j in (picks.get(i) or [])]) if fresh(ln)]
+        if keep:
+            out.append(owner_brief.brief_text(p, keep, partial=not whole) if not whole else owner_brief.brief_text(p, keep))
     return "\n\n".join(out)
 
 
@@ -3369,6 +3468,19 @@ def quick_hook(call: dict, prompt: bool = False):
             pass
         # A name the owner says he does NOT want ("no que muestre Oddsboard") is taken out before the meaning search,
         # or the search goes straight to it (2026-11-03 replay: four Oddsboard entries at 0.61-0.65).
+        # The owner brief's judge call starts NOW and runs while the rest of this map is built (measured on a real
+        # session: of 6.5 s that a message waited, 4.4 s were two judge calls made one after the other). Only when the
+        # session is already on a project: then the projects in play do not depend on what this message names.
+        ob_slots, ob_pool, ob_fut = None, None, None
+        try:
+            if _projects_in_play(seen):
+                ob_slots = _brief_slots(seen, n)
+                if len(q_msg.strip()) >= 3 and any(not whole for _, _, whole in ob_slots):
+                    from concurrent.futures import ThreadPoolExecutor
+                    ob_pool = ThreadPoolExecutor(1)
+                    ob_fut = ob_pool.submit(_brief_picks, q_msg, ob_slots)
+        except Exception:
+            ob_slots, ob_pool, ob_fut = None, None, None
         q_mean = _drop_negated_names(q_msg)
         try:
             import judge as _jg
@@ -3435,6 +3547,7 @@ def quick_hook(call: dict, prompt: bool = False):
         for e in ents:
             shares.setdefault(e, 0.0)
         shown: set = set()
+        ruled: dict = {}
         try:
             import judge
             judge_on = judge.available()
@@ -3445,10 +3558,14 @@ def quick_hook(call: dict, prompt: bool = False):
                 break
             fr = _fold(raw)
             occ = [mo.start() for mo in re.finditer(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", fr)]
-            if occ and all(_NEGATED.search(fr[max(0, i - 60):i]) for i in occ):
+            if occ and all(_NEGATED.search(fr[max(0, i - 60):i]) and not _asked_about(fr, i) for i in occ):
                 continue
             m = quick_map(w, limit=3, context=text)
             named_cards = [x for x in m.get("decided", []) + m.get("exists", []) if w in _fold(x.get("what") or "")]
+            if w in ents:
+                # What the owner already decided about a thing he names by its name is kept apart: the filters below
+                # may drop the whole map of that name (see _ruled_block).
+                ruled[w] = [x for x in m.get("decided", []) if w in _fold(x.get("what") or "")]
             strong = m.get("pieces") or any(w in _name_words(j["journal"]) for j in m.get("journals", [])) \
                 or len(named_cards) >= 2 or m.get("about") or m.get("vault") \
                 or (w in ents and (m.get("plans") or m.get("decided") or m.get("exists"))) \
@@ -3526,6 +3643,9 @@ def quick_hook(call: dict, prompt: bool = False):
             if keep is not None:
                 drop = {wm[i] for i in range(len(wm)) if i not in keep}
                 maps = [t for i, t in enumerate(maps) if i not in drop]
+        rb = _ruled_block(ruled, "\n".join(maps))
+        if rb:
+            maps.append(rb)
         skip = set(re.findall(r"[\w.-]+\.md:\d+", "\n".join(maps)))
         # The journals named after a mapped word ("shopsite" -> SHOPSITE_JOURNAL.md), not every journal a map mentions
         # (the shopsite map named PORTFOLIO_CO_JOURNAL and its Launch Desk brief came along, 2026-11-03).
@@ -3561,9 +3681,15 @@ def quick_hook(call: dict, prompt: bool = False):
             maps.insert(0, tc)
         # The owner brief goes first, whatever the words of the message (2026-11-03: "ya te dije ayer" got nothing).
         try:
-            ob = _owner_brief_block(seen, n, q_msg, word_js | {h["journal"] for h in mh[:1]}, "\n".join(maps))
+            if ob_slots is not None:
+                ob = _brief_text(ob_slots, ob_fut.result() if ob_fut else {}, "\n".join(maps))
+            else:
+                ob = _owner_brief_block(seen, n, q_msg, word_js | {h["journal"] for h in mh[:1]}, "\n".join(maps))
         except Exception:
             ob = ""
+        finally:
+            if ob_pool:
+                ob_pool.shutdown(wait=False)
         if ob:
             maps.insert(0, ob)
         if maps:

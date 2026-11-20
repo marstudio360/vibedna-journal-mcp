@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.1.0 (2026-11-20)
+
+Built on 2.0.0 with the same pinned dependencies. Nothing to set up again: the 35 tools, the plugin and every
+`JOURNAL_*` setting are the same.
+
+- **A lean start for the judge** (`judge.py`): every judge call passes four documented settings of the `claude`
+  command that switch off its side work at start. Measured on one machine, six calls each way: 3.5 s a call before,
+  2.1 s after, every call answered. `JOURNAL_JUDGE_LEAN=off` goes back.
+- **The owner brief's judge call runs alongside** (`quickmap.py`): it starts with the prompt map and is collected at
+  the end; with two projects in play the two calls go side by side. Measured on one real session, three messages each
+  way: 8.7, 10.2 and 9.6 s before; 3.1, 3.0 and 3.3 s after; the same map.
+- **The alarm judge** (`alarmjudge.py`, new; only with the judge on): reads each alarm of the background reply check
+  before it is said and cancels the ones that are not about the same thing as the reply. On a fixed exam of 17 real
+  alarms it cancelled the 10 false ones and kept the 7 right ones on two runs out of three, and kept 6 of the 7 on the
+  third. Verdicts are logged in `~/.journal/alarm_judge_log.jsonl`. `JOURNAL_ALARM_JUDGE=off` turns it off.
+- **A name asked about in a question keeps its map**, and the Decided cards that name a thing the message names go
+  with the message even when the relevance filter drops the rest of that thing's map.
+- **No silent cut** (the mod): a prompt map that is cut at its time limit tells the session so.
+- **Journal tools through a connector** are read as journal tools by the hook and the mod.
+- **Fix:** an entry tagged incident, mod-miss, miss, bug, brainstorm, idea, plan or todo never counts as a ship.
+- **Fix:** the test "the ship entry itself says this thing is not done" had lost its pattern to another one of the
+  same name defined later in the file; it has its own name again.
+
 ## 2.0.0 (2026-11-15)
 
 Journals DNA is now **Neural DNA: Memory for your AI.** Only the name changed: the 35 tools, the server name, the

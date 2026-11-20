@@ -76,10 +76,21 @@ def available() -> bool:
     return not OFF and bool(shutil.which(CMD))
 
 
+LEAN_ENV = {"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_FEATURE_FLAGS": "1",
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "CLAUDE_CODE_MCP_STARTUP_WAIT_MS": "0"}
+
+
 def _run(prompt: str, timeout: float = TIMEOUT, think: bool = False, model: str = "") -> str:
     # Thinking off for a pick (2026-11-03: a 3-number answer spent 1,800-3,000 thinking tokens, 19-29 s, and changed
     # between runs; with MAX_THINKING_TOKENS=0 the same call is 3 s, 13 tokens, the same answer 3 times out of 3).
-    env = dict(os.environ, MAX_THINKING_TOKENS="0") if not think else None
+    env = dict(os.environ, MAX_THINKING_TOKENS="0") if not think else dict(os.environ)
+    # A judge call is a bare question: it needs none of the program's side work at start (update and status checks,
+    # feature flags, auto memory, the wait for MCP servers). All four are documented settings of the claude command.
+    # Measured on one machine, six calls each way, turn about, same flags and model: 3.5 s a call before, 2.1 s with
+    # these, every call answered. JOURNAL_JUDGE_LEAN=off puts the old start back.
+    if os.environ.get("JOURNAL_JUDGE_LEAN", "").lower() not in ("off", "0", "false", "no"):
+        for k, v in LEAN_ENV.items():
+            env.setdefault(k, v)
     # A short system prompt and no tools: with the default ones every call carried ~39,000 tokens of the coding
     # agent's own instructions (measured 2026-11-03: "ok" = 39,466 tokens in, 723 with these two flags, cost / 5).
     args = [CMD, "-p", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence",

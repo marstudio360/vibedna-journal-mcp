@@ -1,4 +1,4 @@
-# Install Neural DNA 2.0.0
+# Install Neural DNA 2.1.0
 
 **Neural DNA: Memory for your AI.** Neural DNA was called Journals DNA until version 1.6; the tool names, the folder layout and every setting are the same, so an install that works today keeps working. Your AI cannot skip your journal: that is still what it does. This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
@@ -494,6 +494,9 @@ one: `.venv/bin/python owner_brief.py --show <path of a journal>`.
 | `JOURNAL_AI_CHECKS` | `off` (default), `risky` or `all`: the AI check of each command, MCP tool call and file write |
 | `JOURNAL_ACTION_CHECK=off` | Turn the AI check module off even when `JOURNAL_AI_CHECKS` is set |
 | `JOURNAL_RULE_FILES` | Rule files outside your journals (your `CLAUDE.md`, an `AGENTS.md`), separated by `;` on Windows and `:` elsewhere |
+| `JOURNAL_ALARM_JUDGE` | `off` turns off the judge that reads an alarm of the reply check before it is said (it only runs with the judge on) |
+| `JOURNAL_ALARM_JUDGE_MODEL` | The model that reads those alarms (default: the verdict model) |
+| `JOURNAL_JUDGE_LEAN` | `off` starts the judge's program the old way, with its side work at start |
 | `JOURNAL_DONE_CHECK` | `off` turns off the check of "done" said right after a change nothing looked at |
 | `JOURNAL_NEIGHBOURS` | Another place for the neighbours list (default `~/.journal/growth/neighbours.json`) |
 | `JOURNAL_COMPILE_MODEL` | The model that compiles your rules into tests (default: the stop model) |
@@ -544,6 +547,28 @@ Your journals, your rule files and your AI's own memory are never changed by ins
 
 # What changed in each version
 The full list is in CHANGELOG.md.
+
+## New in 2.1.0
+- **Your message reaches your AI sooner (with the judge on).** Before each message the mod asks the judge which of
+  your decisions apply and which entries mean the same. Those calls now start lean (four documented settings of the
+  `claude` command: no update or status checks, no feature flags, no auto memory, no wait for MCP servers) and run
+  side by side. Measured on our own machine: one judge call 3.5 s before, 2.1 s now; a message with two projects in
+  play waited about 9.5 s for its map before, about 3 s now. `JOURNAL_JUDGE_LEAN=off` puts the old start back.
+- **The alarm judge (with the judge on).** The reply check that runs after your AI's reply is shown matches words
+  ("you listed it as still to do, but the journals say it shipped", "this runs on something that was shut down").
+  Before such an alarm is said, the judge reads the reply sentence, the alarm and the entry it cites, and cancels it
+  when the two are not about the same thing. One call per alarm, three at most, never waited for. No verdict in
+  time keeps the alarm. `JOURNAL_ALARM_JUDGE=off` turns it off; every verdict is kept in
+  `~/.journal/alarm_judge_log.jsonl`.
+- **A thing you ask about keeps its map.** A name with a "no" just before it used to be read as "do not show me
+  this"; inside a question it is now what you are asking about. And the decisions you recorded about a thing you name
+  come with the message even when the rest of that thing's map is left out as off-topic.
+- **A map that is late says so.** When the map of a message is cut at its time limit, your AI gets one line telling
+  it the map did not arrive and to run `journal_quick` first.
+- **Journal tools through a connector count.** A journal read or save made through a connector
+  (`mcp__<server>__local_journal_journal_quick`) now opens the gate and shows as saved, like the tool's own.
+- **Fix:** an entry tagged `[incident]`, `[bug]`, `[plan]`, `[idea]` or `[todo]` is never taken for a delivery
+  because of a word in its title; and a ship entry that itself says the thing is not done no longer counts as done.
 
 ## New in 2.0.0
 - **A new name.** Journals DNA is now Neural DNA: Memory for your AI. Only the name changed: the 35 tools

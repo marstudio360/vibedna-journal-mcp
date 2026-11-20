@@ -38,8 +38,16 @@ const JOURNAL_FILE = /journal[^\\/]*\.md$/i
 const READ = /^(Read|Grep|Glob)$/
 const DATA = /^mcp__(?!journal__).*(sql|query)/i
 const MCP = /^mcp__/
-const JOURNAL_READ_TOOL = /^mcp__journal__journal_(read|read_section|handoff_brief|search|quick)$/
-const JOURNAL_SAVE_TOOL = /^mcp__journal__journal_(append|update_section|decision_add|capability_add)$/
+// The journal tools under their own server ("mcp__journal__journal_quick") or carried by a connector
+// ("mcp__<server>__local_journal_journal_quick"): reads and saves made through a connector were treated as any
+// other MCP call, so they never opened the gate and never showed "saved".
+const JOURNAL_READ_TOOL = /^mcp__(?:journal__|.+__local_journal_)journal_(read|read_section|handoff_brief|search|quick)$/
+const JOURNAL_SAVE_TOOL = /^mcp__(?:journal__|.+__local_journal_)journal_(append|update_section|decision_add|capability_add)$/
+// No silent cut: a very long message once took longer to map than the check is given, it was cut, and the session
+// answered with no map and no word that one was missing.
+const LATE = 'JOURNALS: the map for this message did not arrive in time (the check was cut at its 30 s limit), so ' +
+  'nothing in it was checked against the journals. Before you answer or propose anything, run journal_quick on the ' +
+  'main topic of the message and read what it points to.'
 
 // What the person sees under the prompt: calm by default, one plain sentence for a real event.
 const ACTIVE = 'Neural DNA · active'
@@ -223,9 +231,11 @@ export const register: Register = on => {
     // One switch: with no JOURNAL_MCP_DIR in the settings the whole mod is off (no hook, no paragraph, no status line).
     if (!(await $.env.get('JOURNAL_MCP_DIR'))) return next(e)
     $.ui.status(ACTIVE)
+    const t0 = Date.now()
     const out = await quick($, { prompt: e.text }, true)
     if (out?.additionalContext && DECIDED.test(out.additionalContext)) $.ui.status(SAID.decided)
     const ctx = [...(e.context ?? [])]
+    if (!out && Date.now() - t0 >= 29000) ctx.push(LATE)
     if (replyNote) { ctx.push(replyNote); replyNote = '' }
     if (out?.additionalContext) ctx.push(out.additionalContext)
     return ctx.length !== (e.context ?? []).length ? next({ ...e, context: ctx }) : next(e)
