@@ -10,6 +10,12 @@ share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
 
+## New in 2.2.1
+
+- **The installer says so when there is no keyboard.** `install_mod.py` with no flag, run by an AI in a shell that
+  cannot answer its one question, used to end in a Python error. It now prints "No keyboard here, so nothing was
+  changed" and how to go on (`--yes`, after you said yes to the list), and exits with code 1. Nothing else changed.
+
 ## New in 2.2.0
 
 - **It learns from you by itself.** When your message corrects your AI or sets a direction ("always", "never", "I do

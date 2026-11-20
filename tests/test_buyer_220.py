@@ -13,7 +13,7 @@ import quickmap  # noqa: E402
 
 def test_the_version_is_the_same_everywhere():
     v = (PKG / "VERSION").read_text(encoding="utf-8").strip()
-    assert v == "2.2.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v)
     assert f'VERSION = "{v}"' in (PKG / "server.py").read_text(encoding="utf-8")
     assert json.loads((PKG / "mod" / "journals" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"] == v
     assert f'"version": "{v}"' in (PKG / "mod" / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")

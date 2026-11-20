@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.1 (2026-11-20)
+
+Built on 2.2.0 with the same pinned dependencies. Nothing to set up again.
+
+- `install_mod.py` with no flag in a shell with no keyboard (how an AI runs it) ended in a Python traceback at
+  "Apply these changes? [y/N]". It now prints one line (nothing was changed; run it again with `--yes` after the
+  person says yes) and exits 1. Found by running the installer that way on a Linux server.
+
 ## 2.2.0 (2026-11-20)
 
 Built on 2.1.0 with the same pinned dependencies. Nothing to set up again. Five exact checks (no AI) that our own

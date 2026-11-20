@@ -1,4 +1,4 @@
-# Install Neural DNA 2.2.0
+# Install Neural DNA 2.2.1
 
 **Neural DNA: Memory for your AI.** Neural DNA was called Journals DNA until version 1.6; the tool names, the folder layout and every setting are the same, so an install that works today keeps working. Your AI cannot skip your journal: that is still what it does. This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
@@ -206,6 +206,7 @@ Your journals are not touched. The index in `~/.journal` is made later, on first
 ```
 It asks once (`Apply these changes? [y/N]`), then makes the changes above. An AI running this in a shell with no
 keyboard uses `.venv/bin/python install_mod.py --yes`, and only after the person said yes to the dry run's list.
+Run with no keyboard and no `--yes`, it changes nothing and says so in one line.
 Running it again changes nothing. If the `claude` command is not on
 your PATH, it still writes the two keys and prints the three `claude` commands for you to run where Claude Code
 works.
@@ -550,6 +551,11 @@ Your journals, your rule files and your AI's own memory are never changed by ins
 
 # What changed in each version
 The full list is in CHANGELOG.md.
+
+## New in 2.2.1
+- **The installer says so when there is no keyboard.** `install_mod.py` with no flag, run by an AI in a shell that
+  cannot answer its one question, used to end in a Python error. It now prints "No keyboard here, so nothing was
+  changed" and how to go on (`--yes`, after you said yes to the list), and exits with code 1. Nothing else changed.
 
 ## New in 2.2.0
 Five checks that ran in our own copy since mid November are now in yours. All of them are exact tests: no AI call,

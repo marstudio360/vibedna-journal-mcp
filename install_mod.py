@@ -297,9 +297,16 @@ def install(dry: bool, yes: bool) -> int:
             run_claude("plugin", "marketplace", "add", str(HERE / "mod"), dry=True)
             run_claude("plugin", "install", f"{PLUGIN}@{MARKETPLACE}", dry=True)
         return 0
-    if not yes and input("Apply these changes? [y/N] ").strip().lower() not in ("y", "yes"):
-        say("Nothing changed.")
-        return 0
+    if not yes:
+        try:
+            answer = input("Apply these changes? [y/N] ")
+        except EOFError:
+            say("\nNo keyboard here, so nothing was changed. After the person says yes to the list above, "
+                "run it again with --yes.")
+            return 1
+        if answer.strip().lower() not in ("y", "yes"):
+            say("Nothing changed.")
+            return 0
 
     if todo:
         env.update(todo)
