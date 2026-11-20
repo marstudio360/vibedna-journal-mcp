@@ -10,6 +10,21 @@ share your work with anyone by sending the journal.
 
 It runs on your machine. Your journals stay where they are, in plain markdown.
 
+## New in 2.2.0
+
+- **It learns from you by itself.** When your message corrects your AI or sets a direction ("always", "never", "I do
+  not like", "it has to be") and your AI ends its turn without writing it down, the reply goes back once: save it,
+  then say in one line that it is saved. No AI involved. What you said yesterday is in front of your AI tomorrow.
+- **"Do we have X?" is answered from your journals.** Before your AI says no, it is shown what your journals record
+  as shipped, built or approved about X; and a reply that says a thing does not exist, or offers to build one you
+  already have, gets one correction line.
+- **What you already ruled out stays ruled out.** A proposal of something your journals say was withdrawn or
+  rejected gets a note with that entry.
+- **A name you moved away from is flagged.** A reply that treats as current a service or product an entry title
+  says was replaced gets a note.
+- **Nothing is asked of you twice.** A reply that hands you a decision your own Decided card gives to someone else,
+  or promises "from now on" without writing a rule, goes back once.
+
 ## New in 2.1.0
 
 - **Your message reaches your AI sooner.** With the judge on, the questions the mod asks it before each message now

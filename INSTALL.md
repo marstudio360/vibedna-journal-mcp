@@ -1,4 +1,4 @@
-# Install Neural DNA 2.1.0
+# Install Neural DNA 2.2.0
 
 **Neural DNA: Memory for your AI.** Neural DNA was called Journals DNA until version 1.6; the tool names, the folder layout and every setting are the same, so an install that works today keeps working. Your AI cannot skip your journal: that is still what it does. This file is self-contained: you can follow it yourself, or
 open Claude Code in the unzipped folder and say "install this, following INSTALL.md". The AI should show you each
@@ -494,6 +494,9 @@ one: `.venv/bin/python owner_brief.py --show <path of a journal>`.
 | `JOURNAL_AI_CHECKS` | `off` (default), `risky` or `all`: the AI check of each command, MCP tool call and file write |
 | `JOURNAL_ACTION_CHECK=off` | Turn the AI check module off even when `JOURNAL_AI_CHECKS` is set |
 | `JOURNAL_RULE_FILES` | Rule files outside your journals (your `CLAUDE.md`, an `AGENTS.md`), separated by `;` on Windows and `:` elsewhere |
+| `JOURNAL_OWNER_LEARN` | `off` turns off the learn check (a correction of yours with no entry written goes back once) |
+| `JOURNAL_OWNER_CALLS` | `off` turns off the owner calls check (what a reply hands you against your Decided cards, and unwritten promises) |
+| `JOURNAL_EXISTS_PROBE` | `off` turns off the exists check on your message |
 | `JOURNAL_ALARM_JUDGE` | `off` turns off the judge that reads an alarm of the reply check before it is said (it only runs with the judge on) |
 | `JOURNAL_ALARM_JUDGE_MODEL` | The model that reads those alarms (default: the verdict model) |
 | `JOURNAL_JUDGE_LEAN` | `off` starts the judge's program the old way, with its side work at start |
@@ -547,6 +550,31 @@ Your journals, your rule files and your AI's own memory are never changed by ins
 
 # What changed in each version
 The full list is in CHANGELOG.md.
+
+## New in 2.2.0
+Five checks that ran in our own copy since mid November are now in yours. All of them are exact tests: no AI call,
+nothing to pay, and each can be switched off.
+- **The learn check.** When your last message corrects your AI or sets a direction (whole words such as "always",
+  "never", "I do not like", "it has to be", "I told you", in English or Spanish) and no entry tagged as yours
+  (`[correction]`, `[decision]`, `[rule]`, `[owner-order]`, `[owner-said]`, `[verdict]`) was written to a journal in
+  play during that turn, the reply goes back once: "save it now, then tell him in one line that it is saved". A
+  journal tool call or a direct edit of a journal or rules file in the turn counts as written. A plain message costs
+  nothing; a direction costs about 20 ms. `JOURNAL_OWNER_LEARN=off` turns it off. Every send-back is kept in
+  `~/.journal/owner_learn_log.jsonl`.
+- **The owner calls check.** A reply line that hands you something ("waits for your yes", "your call", a red
+  blocked mark) is matched against your Decided cards; when a card gives that kind of call to someone else, the
+  reply goes back with the card. A "from now on" with no rule written in the turn goes back too.
+  `JOURNAL_OWNER_CALLS=off` turns both off.
+- **The exists check.** A message that asks whether something exists ("do we have", "is there", "did we build",
+  "tenemos", "hay") gets the entries your journals record as shipped, built or approved about it, before your AI
+  answers. A finished reply that says a thing does not exist, or offers to create one, while such an entry names it,
+  gets one correction line. A long message is read only on the sentences that ask. `JOURNAL_EXISTS_PROBE=off` turns
+  off the part on the message.
+- **The verdict check.** A reply that proposes something a sentence in your journals says was withdrawn, rejected
+  or ruled out gets a note for the next turn, never a stop. Notes are kept in `~/.journal/verdict_check_log.jsonl`.
+- **The moved-names check.** A reply that names a service, vendor or product whose move an entry TITLE records
+  ("moved from X to Y", "X replaced by Y") without naming where it went gets a note. With the judge on, the alarm
+  judge reads that note before it is said, like the other two.
 
 ## New in 2.1.0
 - **Your message reaches your AI sooner (with the judge on).** Before each message the mod asks the judge which of

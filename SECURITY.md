@@ -39,6 +39,9 @@ meaning, whose service listens on `127.0.0.1` only, or run `growth.py --serve <p
   the one Claude Code passes to the Stop hook, to see which tool calls the turn made. It reads tool names, file
   paths and commands, locally.
 
+- The learn check and the owner calls check read the end of the current session's transcript file (your last typed
+  message and the names of the tools the turn called) and the last lines of the journals in play. Locally, no AI.
+- The exists check and the verdict check search your own journal index. Locally, no AI.
 - The alarm judge (only with the judge on, `JOURNAL_ALARM_JUDGE=off`) sends to your own AI, through the `claude`
   command already logged in on your machine, one sentence of the finished reply, the alarm and the title or sentence
   of the journal entry the alarm cites. Nothing goes anywhere else.
@@ -53,6 +56,10 @@ meaning, whose service listens on `127.0.0.1` only, or run `growth.py --serve <p
 - `~/journal-outbox/` (or `JOURNAL_OUTBOX`), only when an append targets a read-only journal.
 - `~/.journal/growth/` (the memory map page, `neighbours.json`, `neighbours_meaning.json`), only when you run
   `growth.py`. A page made with `--hide-names` or `--demo-names` carries no journal name and no entry title.
+- `~/.journal/owner_learn_log.jsonl`: one line per reply the learn check sent back (time, session id and the first
+  200 characters of your message).
+- `~/.journal/exists_check_log.jsonl` and `~/.journal/verdict_check_log.jsonl`: one line per correction or note
+  (time, session id and the text of the note).
 - `~/.journal/alarm_judge_log.jsonl`: one line per alarm the judge read (time, session id, the kind of check, the
   verdict and its reason, the first 300 characters of the reply sentence and of the entry).
 - `~/.journal/done_check_log.jsonl`: one line per reply the done check sent back (time, session id, the reason and

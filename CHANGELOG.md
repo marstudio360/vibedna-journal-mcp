@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.0 (2026-11-20)
+
+Built on 2.1.0 with the same pinned dependencies. Nothing to set up again. Five exact checks (no AI) that our own
+copy ran since mid November are now in the package:
+
+- **The learn check** (`owner_calls.py`, new): the owner's message corrects or sets a direction and no entry tagged
+  as his was written that turn: the reply goes back once so it is saved. About 20 ms on a direction, nothing on a
+  plain message. `JOURNAL_OWNER_LEARN=off`.
+- **The owner calls check** (same file): a reply that hands the owner a decision one of his Decided cards gives to
+  someone else, or promises "from now on" with no rule written, goes back once. `JOURNAL_OWNER_CALLS=off`.
+- **The exists check** (`existsprobe.py`, new): "do we have X?" gets what the journals record as shipped, built or
+  approved; a reply that says a thing does not exist, or offers to build it, gets one correction line. A long
+  message is probed only on the sentences that ask (a pasted brief once made every word a topic and the map of that
+  message arrived too late). `JOURNAL_EXISTS_PROBE=off` for the part on the message.
+- **The verdict check** (`verdictprobe.py`, new): a proposal of something the journals ruled out gets a note.
+- **The moved-names check** (`quickmap.py`): a name an entry title says was moved away from or replaced gets a
+  note; words quoted inside a title are not a move, and "another" is not a place. The alarm judge reads it too.
+- A quoted line of copy shown for approval is not read as a promise (quotes up to 400 characters).
+
 ## 2.1.0 (2026-11-20)
 
 Built on 2.0.0 with the same pinned dependencies. Nothing to set up again: the 35 tools, the plugin and every

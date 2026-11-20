@@ -1503,6 +1503,74 @@ def _shutdown_claims(text: str, days: int = 10) -> list[str]:
     return out
 
 
+# A thing moved or replaced, said in an entry TITLE: "moved from X to Y", "X replaced by Y".
+_MOVED = re.compile(r"(?<![a-z])(?:moved?|moving|migrat\w+|switch\w+|replac\w+|supersed\w+|pasamos|pasaron|mudamos|"
+                    r"migramos|cambiamos|reemplaz\w+)(?![a-z])")
+
+
+_NOT_A_PLACE = {"another", "other", "others", "one", "the", "this", "that", "new", "otro", "otra", "otros", "otras",
+                "uno", "una", "nuevo", "nueva", "este", "esta", "ese", "esa"}
+
+
+def _moved_claims(text: str) -> list[str]:
+    """The reply names a service, vendor or product, and the TITLE of a dated entry says that name was moved away
+    from or replaced ("moved from X to Y", "X replaced by Y"), while the reply never names Y. Real case 2026-11-16:
+    two replies listed "the product name in PayOne" as pending for a brand whose journal had the entry
+    "2026-11-06 [ship] PAYMENTS MOVED FROM PAYONE TO PAYTWO"; the entry reached the session only on the next
+    turn, after the owner wrote the name himself. Titles only: a passing mention inside an entry never counts.
+    The newest title that names the word decides."""
+    plain = re.sub(r"`[^`]*`|https?://\S+|\"[^\"\n]{0,300}\"|“[^”\n]{0,300}”", " ", text)
+    folded = _fold(plain)
+    words = []
+    for w in re.findall(r"\b([A-Z][A-Za-z0-9]{3,})\b", plain):
+        f = _fold(w)
+        if (f not in words and f not in _STOP and f not in _CHAT_WORDS and f not in _GENERIC_REPLY
+                and f not in _TIME_WORDS):
+            words.append(f)
+    if not words:
+        return []
+    out = []
+    c = _conn()
+    try:
+        names = dict(c.execute("SELECT path, name FROM journals").fetchall())
+        for w in words[:14]:
+            away = re.compile(r"(?:from|de|desde)\s+(?:[a-z0-9_.-]+\s+){0,2}?" + re.escape(w)
+                              + r"\s+(?:to|a|hacia)\s+([a-z][a-z0-9_.-]{2,})"
+                              r"|(?<![a-z0-9_-])" + re.escape(w)
+                              + r"\s+(?:was\s+|is\s+|fue\s+)?(?:replaced|superseded|reemplazad[oa])\s+(?:by|with|por)\s+"
+                              r"([a-z][a-z0-9_.-]{2,})")
+            rows = c.execute("SELECT path, line, heading FROM entries_fts WHERE entries_fts MATCH ? LIMIT 400",
+                             (f'heading:"{w}"',)).fetchall()   # titles only: the word is in thousands of bodies
+            best = []
+            for path, line, heading in rows:
+                hm = _HEAD_DATE.match(heading or "")
+                if not hm:
+                    continue
+                # Words quoted inside a title are copy or someone's sentence, not what the entry states (a title
+                # that quoted the line of a sales letter, "like moving memory from one brain to another", made a
+                # product with "brain" in its name a thing that "moved to another").
+                fh = _fold(re.sub(r"\"[^\"\n]{0,300}\"|“[^”\n]{0,300}”", " ", _HEAD_DATE.sub("", heading or "")))
+                m = away.search(fh)
+                if not m or not _MOVED.search(fh):
+                    continue
+                new = (m.group(1) or m.group(2) or "").strip(".-")
+                if new in _NOT_A_PLACE:
+                    continue   # "to another", "to the", "a otro": no place is named
+                if not new or re.search(r"(?<![a-z0-9])" + re.escape(new) + r"(?![a-z0-9])", folded):
+                    continue   # the reply names where it went: it knows about the move
+                best.append((hm.group(1) + " " + (hm.group(2) or "00:00"), names.get(path, Path(path).name),
+                             int(line), new, (heading or "").strip()[:200]))
+            for when, j, ln, new, head in sorted(best, reverse=True)[:1]:
+                out.append(f"- {w}: your reply names it, but {j}:{ln} says it moved to {new}: {head}")
+            if len(out) >= 3:
+                break
+    except Exception:
+        pass
+    finally:
+        c.close()
+    return out
+
+
 def reply_check(call: dict) -> None:
     t_start = time.time()
     text = str(call.get("reply") or "")[:8000]
@@ -1526,21 +1594,49 @@ def reply_check(call: dict) -> None:
         claims = _shutdown_claims(text)
     except Exception:
         claims = []
-    # These two match words, so now and then they raise an alarm about an entry that only shares a word with the
+    try:
+        moved = _moved_claims(text)
+    except Exception:
+        moved = []
+    # These three match words, so now and then they raise an alarm about an entry that only shares a word with the
     # reply. With the judge on, it reads each alarm before it is said and cancels the wrong ones (alarmjudge.py). This
     # check runs after the reply is shown and nobody waits for it; it has 15 s in all, so the judge gets what is left.
     try:
         import alarmjudge
-        kept = alarmjudge.keep_right({"shipped": shipped, "shutdown": claims}, text,
+        kept = alarmjudge.keep_right({"shipped": shipped, "shutdown": claims, "moved": moved}, text,
                                      str(call.get("session_id") or ""), budget=13 - (time.time() - t_start))
-        shipped, claims = kept["shipped"], kept["shutdown"]
+        shipped, claims, moved = kept["shipped"], kept["shutdown"], kept["moved"]
     except Exception:
         pass
+    # A proposal of something the journals ruled out (2026-11-14: an "open in your browser" pay button was proposed,
+    # built and previewed while a sentence inside an 11-05 entry said the idea was withdrawn; _PROPOSES missed
+    # "lo que cambiaria" and the verdict had no card). No AI, a note only (verdictprobe.py).
+    ruled = ""
+    try:
+        import verdictprobe
+        ruled = verdictprobe.reply_check(text, folders)
+        if ruled:
+            try:
+                log = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "verdict_check_log.jsonl"
+                with log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                         "session": call.get("session_id", ""), "why": ruled[:1200]},
+                                        ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+    except Exception:
+        ruled = ""
     parts = []
+    if ruled:
+        parts.append(ruled)
     if claims:
         parts.append("CHECK THIS CLAIM IN YOUR LAST REPLY: you said something uses or runs on these, and a recent entry "
                      "says it was shut down or turned off. Re-read that entry and, if your claim was stale, correct it "
                      "for the owner before anything else:\n" + "\n".join(claims))
+    if moved:
+        parts.append("CHECK THIS NAME IN YOUR LAST REPLY: you named something as where a thing lives, is sold or is "
+                     "charged, and an entry title says it was moved away from or replaced. Re-read that entry and, if "
+                     "your reply was stale, correct it for the owner before anything else:\n" + "\n".join(moved))
     if shipped:
         parts.append("WRONG IN YOUR LAST REPLY: you told the owner something is still pending that the journals say "
                      "already shipped. Correct it in your next reply, before anything else, and update that journal's "
@@ -3184,6 +3280,37 @@ def stop_check(call: dict) -> None:
     the reply check rode into the NEXT turn, after the owner had already read the repeated proposal)."""
     if call.get("stop_hook_active"):
         return
+    # No AI, always on (owner 2026-11-11): what the reply puts on the owner against the Decided cards, and promises
+    # with nothing written this turn (owner_calls.py).
+    try:
+        import owner_calls
+        why = owner_calls.check(str(call.get("reply") or ""), str(call.get("transcript_path") or ""),
+                                str(call.get("session_id") or ""))
+        if why:
+            print(json.dumps({"hookSpecificOutput": {"block": why}}, ensure_ascii=False))
+            return
+    except Exception:
+        pass
+    # No AI, always on (owner 2026-11-13): a reply that says a thing does not exist or proposes to create it, while
+    # the journals record it shipped, built or approved, gets one correction line at once (existsprobe.reply_check;
+    # a reply with no such line costs one regex).
+    try:
+        import existsprobe
+        why = existsprobe.reply_check(str(call.get("reply") or ""))
+        if why:
+            # every stop is kept, so right stops and false stops can be counted in real use
+            try:
+                log = Path(os.environ.get("JOURNAL_HOME", str(Path.home() / ".journal"))) / "exists_check_log.jsonl"
+                with log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                         "session": call.get("session_id", ""), "why": why[:1200]},
+                                        ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            print(json.dumps({"hookSpecificOutput": {"block": why + "\n" + FIX_ONLY}}, ensure_ascii=False))
+            return
+    except Exception:
+        pass
     # No AI, always on: the reply says done, fixed or live and nothing looked at the result after the last change of
     # the turn (donecheck.py). It goes back once for the one line that proves it. JOURNAL_DONE_CHECK=off turns it off.
     try:
@@ -3679,6 +3806,15 @@ def quick_hook(call: dict, prompt: bool = False):
         tc = _tool_cards_block(q_msg)
         if tc:
             maps.insert(0, tc)
+        # "do we have X / tenemos X": what the journals record as shipped, built or approved about X, before anyone
+        # answers "no" (2026-11-13: the approved mail journal was answered "we have none"). Local text search, no AI.
+        try:
+            import existsprobe
+            ep = existsprobe.block(q_msg) if os.environ.get("JOURNAL_EXISTS_PROBE", "on") != "off" else ""
+        except Exception:
+            ep = ""
+        if ep:
+            maps.insert(0, ep)
         # The owner brief goes first, whatever the words of the message (2026-11-03: "ya te dije ayer" got nothing).
         try:
             if ob_slots is not None:
